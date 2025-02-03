@@ -17,7 +17,8 @@ export interface NodeData {
 
 const NODE_STRIDE = 5;
 
-export class PointCloudOctreeGeometryNode extends EventDispatcher implements IPointCloudGeometryNode {
+export class PointCloudOctreeGeometryNode extends EventDispatcher
+  implements IPointCloudGeometryNode {
   id: number = PointCloudOctreeGeometryNode.idCount++;
   name: string;
   pcoGeometry: PointCloudOctreeGeometry;

@@ -315,4 +315,8 @@ void main() {
 			gl_FragColor = highlightedPointColor;
 		}
 	#endif
+
+	#ifdef override_opacity
+		gl_FragColor.a = updatedOpacity;
+	#endif
 }

@@ -5,7 +5,7 @@
     "sourceMap": true,
     "declaration": true,
     "declarationDir": "build/declarations",
-    "module": "es2015",
+    "module": "es2020",
     "moduleResolution": "node",
     "strict": true,
     "noImplicitAny": true,
