@@ -4,7 +4,7 @@
     "baseUrl": "./src/",
     "sourceMap": true,
     "declaration": true,
-    "declarationDir": "build/declarations",
+    "declarationDir": "dist/declarations",
     "module": "es2020",
     "moduleResolution": "node",
     "strict": true,

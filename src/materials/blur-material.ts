@@ -3,8 +3,8 @@ import { IUniform } from './types';
 
 // see http://john-chapman-graphics.blogspot.co.at/2013/01/ssao-tutorial.html
 
-import blurVert from './shaders/blur.vert?raw';
-import blurFrag from './shaders/blur.frag?raw';
+import blurVert from './shaders/blur.vert';
+import blurFrag from './shaders/blur.frag';
 
 export interface IBlurMaterialUniforms {
   [name: string]: IUniform<any>;

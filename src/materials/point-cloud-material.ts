@@ -49,8 +49,8 @@ import {
   generateGradientTexture,
 } from './texture-generation';
 import { IClassification, IGradient, IUniform } from './types';
-import pointCloudVert from './shaders/pointcloud.vert?raw';
-import pointCloudFrag from './shaders/pointcloud.frag?raw';
+import pointCloudVert from './shaders/pointcloud.vert';
+import pointCloudFrag from './shaders/pointcloud.frag';
 
 export interface IPointCloudMaterialParameters {
   size: number;
