@@ -37,7 +37,7 @@ export class WorkerPool {
   private pool = new AsyncBlockingQueue<AutoTerminatingWorker>();
   private poolSize = 0;
 
-  constructor(public maxWorkers: number, private workerType: any) {}
+  constructor(public maxWorkers: number, private worker: Worker) {}
 
   /**
    * Returns a worker promise which is resolved when one is available.
@@ -47,9 +47,7 @@ export class WorkerPool {
     // Otherwise, return a promise for worker from the pool.
     if (this.poolSize < this.maxWorkers) {
       this.poolSize++;
-      return Promise.resolve(
-        new AutoTerminatingWorker(new this.workerType(), WorkerPool.POOL_MAX_IDLE),
-      );
+      return Promise.resolve(new AutoTerminatingWorker(this.worker, WorkerPool.POOL_MAX_IDLE));
     } else {
       return this.pool.dequeue().then(worker => {
         worker.markInUse();

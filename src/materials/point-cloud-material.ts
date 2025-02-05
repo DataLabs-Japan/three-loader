@@ -1,5 +1,3 @@
-import 'reflect-metadata';
-
 import {
   AdditiveBlending,
   BufferGeometry,
@@ -9,7 +7,6 @@ import {
   Material,
   NearestFilter,
   NoBlending,
-  NormalBlending,
   PerspectiveCamera,
   RawShaderMaterial,
   Scene,
@@ -49,8 +46,9 @@ import {
   generateGradientTexture,
 } from './texture-generation';
 import { IClassification, IGradient, IUniform } from './types';
-import pointCloudVert from './shaders/pointcloud.vert';
-import pointCloudFrag from './shaders/pointcloud.frag';
+
+import fragShader from './shaders/pointcloud.frag';
+import vertShader from './shaders/pointcloud.vert';
 
 export interface IPointCloudMaterialParameters {
   size: number;
@@ -167,7 +165,6 @@ const CLIP_MODE_DEFS = {
   [ClipMode.CLIP_VERTICALLY]: 'clip_vertically',
 };
 
-@MaterialDecorator
 export class PointCloudMaterial extends RawShaderMaterial {
   private static helperVec3 = new Vector3();
   private static helperVec2 = new Vector2();
@@ -267,7 +264,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('maxSize') maxSize!: number;
   @uniform('minSize') minSize!: number;
   @uniform('octreeSize') octreeSize!: number;
-  @uniform('opacity', true) opacity: number = 1;
+  @uniform('opacity', true) opacity!: number;
   @uniform('rgbBrightness', true) rgbBrightness!: number;
   @uniform('rgbContrast', true) rgbContrast!: number;
   @uniform('rgbGamma', true) rgbGamma!: number;
@@ -386,8 +383,8 @@ export class PointCloudMaterial extends RawShaderMaterial {
   }
 
   updateShaderSource(): void {
-    this.vertexShader = this.applyDefines(pointCloudVert);
-    this.fragmentShader = this.applyDefines(pointCloudFrag);
+    this.vertexShader = this.applyDefines(vertShader);
+    this.fragmentShader = this.applyDefines(fragShader);
 
     if (this.opacity === 1.0) {
       this.blending = NoBlending;
@@ -396,7 +393,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
       this.depthWrite = true;
       this.depthFunc = LessEqualDepth;
     } else if (this.opacity < 1.0 && !this.useEDL) {
-      this.blending = NormalBlending;
+      this.blending = AdditiveBlending;
       this.transparent = true;
       this.depthTest = false;
       this.depthWrite = true;
@@ -722,58 +719,42 @@ function getValid<T>(a: T | undefined, b: T): T {
   return a === undefined ? b : a;
 }
 
-function MaterialDecorator<T extends { new (...args: any[]): {} }>(constructor: T) {
-  return class extends constructor {
-    constructor(...args: any[]) {
-      super(...args);
-      Object.keys(this).forEach(key => {
-        const uniformName = Reflect.getMetadata('uniform', this, key);
-        const requireSrcUpdate = Reflect.getMetadata('requireSrcUpdate', this, key);
-        if (uniformName) {
-          Object.defineProperty(this, key, {
-            get() {
-              return this.getUniform(uniformName);
-            },
-            set(value: any) {
-              if (value !== this.getUniform(uniformName)) {
-                this.setUniform(uniformName, value);
-                if (typeof requireSrcUpdate === 'boolean' && requireSrcUpdate) {
-                  this.updateShaderSource();
-                }
-              }
-            },
-          });
-        } else if (requireSrcUpdate) {
-          const fieldName = `_${key}`;
-          Object.defineProperty(this, key, {
-            get() {
-              return this[fieldName];
-            },
-            set(value: any) {
-              if (value !== this[fieldName]) {
-                this[fieldName] = value;
-                this.updateShaderSource();
-              }
-            },
-          });
-        }
-      });
-    }
-  };
-}
-
+// tslint:disable:no-invalid-this
 function uniform<K extends keyof IPointCloudMaterialUniforms>(
   uniformName: K,
   requireSrcUpdate: boolean = false,
 ): PropertyDecorator {
   return (target: Object, propertyKey: string | symbol): void => {
-    Reflect.defineMetadata('uniform', uniformName, target, propertyKey);
-    Reflect.defineMetadata('requireSrcUpdate', requireSrcUpdate, target, propertyKey);
+    Object.defineProperty(target, propertyKey, {
+      get() {
+        return this.getUniform(uniformName);
+      },
+      set(value: any) {
+        if (value !== this.getUniform(uniformName)) {
+          this.setUniform(uniformName, value);
+          if (requireSrcUpdate) {
+            this.updateShaderSource();
+          }
+        }
+      },
+    });
   };
 }
 
 function requiresShaderUpdate() {
   return (target: Object, propertyKey: string | symbol): void => {
-    Reflect.defineMetadata('requireSrcUpdate', true, target, propertyKey);
+    const fieldName = `_${propertyKey.toString()}`;
+
+    Object.defineProperty(target, propertyKey, {
+      get() {
+        return this[fieldName];
+      },
+      set(value: any) {
+        if (value !== this[fieldName]) {
+          this[fieldName] = value;
+          this.updateShaderSource();
+        }
+      },
+    });
   };
 }

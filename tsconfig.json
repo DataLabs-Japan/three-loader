@@ -20,6 +20,6 @@
     "lib": ["es2017", "dom"],
     "plugins": []
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.js"],
   "exclude": ["build", "node_modules"]
 }
