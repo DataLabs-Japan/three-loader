@@ -15,7 +15,7 @@
   "main": "dist/index.js",
   "typings": "dist/declarations/index.d.ts",
   "scripts": {
-    "install": "build",
+    "install": "yarn build",
     "clean": "rimraf dist",
     "start": "NODE_ENV=development rollup -c --watch",
     "start:example": "webpack-dev-server --config webpack.config.example.js --mode development --progress",
