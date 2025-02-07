@@ -1,4 +1,4 @@
-import { BufferGeometry, Camera, Color, Material, RawShaderMaterial, Scene, Texture, Vector3, Vector4, WebGLRenderer } from 'three';
+import { BufferGeometry, Camera, Color, Material, Matrix4, RawShaderMaterial, Scene, Texture, Vector3, Vector4, WebGLRenderer } from 'three';
 import { PointCloudOctree } from '../point-cloud-octree';
 import { PointCloudOctreeNode } from '../point-cloud-octree-node';
 import { ClipMode, IClipBox } from './clipping';
@@ -21,6 +21,7 @@ export interface IPointCloudMaterialUniforms {
     clipExtent: IUniform<[number, number, number, number]>;
     depthMap: IUniform<Texture | null>;
     diffuse: IUniform<[number, number, number]>;
+    dimOutsideMask: IUniform<boolean>;
     fov: IUniform<number>;
     gradient: IUniform<Texture>;
     heightMax: IUniform<number>;
@@ -68,6 +69,11 @@ export interface IPointCloudMaterialUniforms {
     stripeDivisorX: IUniform<number>;
     stripeDivisorY: IUniform<number>;
     pointCloudMixingMode: IUniform<number>;
+    maskRegions: IUniform<{
+        modelMatrix: Matrix4;
+        min: Vector3;
+        max: Vector3;
+    }[]>;
 }
 export declare class PointCloudMaterial extends RawShaderMaterial {
     private static helperVec3;
@@ -88,10 +94,12 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     private gradientTexture;
     private _classification;
     private classificationTexture;
+    maskRegionLength: number;
     uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>>;
     bbSize: [number, number, number];
     clipExtent: [number, number, number, number];
     depthMap: Texture | undefined;
+    dimOutsideMask: boolean;
     fov: number;
     heightMax: number;
     heightMin: number;
@@ -99,6 +107,11 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     intensityContrast: number;
     intensityGamma: number;
     intensityRange: [number, number];
+    maskRegions: {
+        modelMatrix: Matrix4;
+        min: Vector3;
+        max: Vector3;
+    }[];
     maxSize: number;
     minSize: number;
     octreeSize: number;
@@ -187,6 +200,9 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     constructor(parameters?: Partial<IPointCloudMaterialParameters>);
     dispose(): void;
     clearVisibleNodeTextureOffsets(): void;
+    enableTransparency(): void;
+    disableTransparency(): void;
+    updateShaders(): void;
     updateShaderSource(): void;
     applyDefines(shaderSrc: string): string;
     setPointCloudMixingMode(mode: PointCloudMixingMode): void;

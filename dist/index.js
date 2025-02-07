@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, NoBlending, LessEqualDepth, AdditiveBlending, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -424,6 +424,7 @@ uniform sampler2D depthMap;
 #endif
 
 varying vec3 vColor;
+varying vec3 overridedColor;
 
 #if !defined(color_type_point_index)
 	varying float vOpacity;
@@ -455,7 +456,47 @@ varying vec3 vColor;
 
 float specularStrength = 1.0;
 
+#if defined mask_region_length
+	struct Region {
+		mat4 modelMatrix;
+		vec3 min;
+		vec3 max;
+	};
+	uniform bool dimOutsideMask;
+	uniform Region maskRegions[mask_region_length];
+	varying vec4 fragPosition;
+
+	bool checkWithin(Region region)
+	{
+		// we need fragment position localized to the mask region
+		vec4 localPos = region.modelMatrix * fragPosition;
+
+		// Check if the fragment is inside the cube in its local space
+		return all(greaterThanEqual(localPos.xyz, region.min)) && all(lessThanEqual(localPos.xyz, region.max));
+	}
+#endif
+
 void main() {
+	#if defined mask_region_length
+		bool toDiscard = !dimOutsideMask;
+		float defaultOpacity = opacity;
+		float updatedOpacity = dimOutsideMask ? 0.1 : 0.0;
+
+		for(int i=0; i<mask_region_length; i++)
+		{
+			if (checkWithin(maskRegions[i]))
+			{
+				updatedOpacity = defaultOpacity;
+				toDiscard = false;
+			}
+		}
+
+		if (toDiscard) {
+			discard;
+			return;
+		}
+	#endif
+
 	vec3 color = vColor;
 	float depth = gl_FragCoord.z;
 
@@ -694,6 +735,8 @@ void main() {
 		}
 	#endif
 
+	// gl_FragColor = vec4(overridedColor, 0.2);
+
 	#ifdef override_opacity
 		gl_FragColor.a = updatedOpacity;
 	#endif
@@ -801,6 +844,7 @@ uniform sampler2D depthMap;
 #endif
 
 varying vec3 vColor;
+varying vec3 overridedColor;
 
 #if !defined(color_type_point_index)
 	varying float vOpacity;
@@ -1111,7 +1155,35 @@ vec3 getCompositeColor() {
 	return c;
 }
 
+/**
+ * Converts a float-based hex color to an RGB vec3.
+ * The hex color should be in the format RRGGBB (e.g., 16711680 for 0xFF0000).
+ * @param hex A float representing the hex color (e.g., 16711680 for red).
+ * @return The RGB color as a vec3 (values in [0,1]).
+ */
+vec3 hexToRGB(float hex) {
+    float r = floor(hex / 65536.0);
+    float g = floor(mod(hex, 65536.0) / 256.0);
+    float b = mod(hex, 256.0);
+    return vec3(r, g, b) / 255.0;
+}
+
+/**
+ * Linearly interpolates between two hex colors based on a value in the range [0, 1].
+ * @param color1 The first hex color (e.g., 0xFF0000 for red).
+ * @param color2 The second hex color (e.g., 0x0000FF for blue).
+ * @param t A float in the range [0,1] indicating the interpolation factor.
+ * @return The interpolated RGB color as a vec3.
+ */
+vec3 getColorStop(float color1, float color2, float t) {
+    vec3 c1 = hexToRGB(color1);
+    vec3 c2 = hexToRGB(color2);
+    return mix(c1, c2, clamp(t, 0.0, 1.0));
+}
+varying vec4 fragPosition;
+
 void main() {
+	fragPosition = modelMatrix * vec4(position, 1.0);
 	vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
 
 	gl_Position = projectionMatrix * mvPosition;
@@ -1157,6 +1229,8 @@ void main() {
 	#endif
 
 	gl_PointSize = pointSize;
+	// overridedColor = getColorStop(65280.0, 16711680.0, pointSize/maxSize);
+	overridedColor = getColorStop(65280.0, 16711680.0, getLOD());
 
 	// ---------------------
 	// HIGHLIGHTING
@@ -1354,6 +1428,7 @@ class PointCloudMaterial extends RawShaderMaterial {
         this.gradientTexture = generateGradientTexture(this._gradient);
         this._classification = DEFAULT_CLASSIFICATION;
         this.classificationTexture = generateClassificationTexture(this._classification);
+        this.maskRegionLength = 0;
         this.uniforms = {
             bbSize: makeUniform('fv', [0, 0, 0]),
             blendDepthSupplement: makeUniform('f', 0.0),
@@ -1364,6 +1439,7 @@ class PointCloudMaterial extends RawShaderMaterial {
             clipExtent: makeUniform('fv', [0.0, 0.0, 1.0, 1.0]),
             depthMap: makeUniform('t', null),
             diffuse: makeUniform('fv', [1, 1, 1]),
+            dimOutsideMask: makeUniform('b', false),
             fov: makeUniform('f', 1.0),
             gradient: makeUniform('t', this.gradientTexture || new Texture()),
             heightMax: makeUniform('f', 1.0),
@@ -1413,6 +1489,7 @@ class PointCloudMaterial extends RawShaderMaterial {
             stripeDivisorX: makeUniform('f', 2),
             stripeDivisorY: makeUniform('f', 2),
             pointCloudMixAngle: makeUniform('f', 31),
+            maskRegions: makeUniform('a', []),
         };
         this.useClipBox = false;
         this.weighted = false;
@@ -1481,21 +1558,30 @@ class PointCloudMaterial extends RawShaderMaterial {
     clearVisibleNodeTextureOffsets() {
         this.visibleNodeTextureOffsets.clear();
     }
-    updateShaderSource() {
+    enableTransparency() {
+        this.blending = AdditiveBlending;
+        this.transparent = true;
+        this.depthTest = false;
+        this.depthWrite = true;
+    }
+    disableTransparency() {
+        this.blending = NoBlending;
+        this.transparent = false;
+        this.depthTest = true;
+        this.depthWrite = true;
+        this.depthFunc = LessEqualDepth;
+    }
+    updateShaders() {
         this.vertexShader = this.applyDefines(vertShader);
         this.fragmentShader = this.applyDefines(fragShader);
+    }
+    updateShaderSource() {
+        this.updateShaders();
         if (this.opacity === 1.0) {
-            this.blending = NoBlending;
-            this.transparent = false;
-            this.depthTest = true;
-            this.depthWrite = true;
-            this.depthFunc = LessEqualDepth;
+            this.disableTransparency();
         }
         else if (this.opacity < 1.0 && !this.useEDL) {
-            this.blending = AdditiveBlending;
-            this.transparent = true;
-            this.depthTest = false;
-            this.depthWrite = true;
+            this.enableTransparency();
         }
         if (this.weighted) {
             this.blending = AdditiveBlending;
@@ -1548,6 +1634,10 @@ class PointCloudMaterial extends RawShaderMaterial {
         }
         if (this.colorRgba) {
             define('color_rgba');
+        }
+        if (this.maskRegionLength > 0) {
+            define(`mask_region_length ${this.maskRegionLength}`);
+            define('override_opacity true');
         }
         define('MAX_POINT_LIGHTS 0');
         define('MAX_DIR_LIGHTS 0');
@@ -1736,6 +1826,9 @@ __decorate([
     uniform('depthMap')
 ], PointCloudMaterial.prototype, "depthMap", undefined);
 __decorate([
+    uniform('dimOutsideMask')
+], PointCloudMaterial.prototype, "dimOutsideMask", undefined);
+__decorate([
     uniform('fov')
 ], PointCloudMaterial.prototype, "fov", undefined);
 __decorate([
@@ -1756,6 +1849,9 @@ __decorate([
 __decorate([
     uniform('intensityRange')
 ], PointCloudMaterial.prototype, "intensityRange", undefined);
+__decorate([
+    uniform('maskRegions')
+], PointCloudMaterial.prototype, "maskRegions", undefined);
 __decorate([
     uniform('maxSize')
 ], PointCloudMaterial.prototype, "maxSize", undefined);
