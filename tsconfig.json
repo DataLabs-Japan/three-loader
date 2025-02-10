@@ -4,8 +4,8 @@
     "baseUrl": "./src/",
     "sourceMap": true,
     "declaration": true,
-    "declarationDir": "build/declarations",
-    "module": "es2015",
+    "declarationDir": "dist/declarations",
+    "module": "es2020",
     "moduleResolution": "node",
     "strict": true,
     "noImplicitAny": true,
@@ -20,6 +20,6 @@
     "lib": ["es2017", "dom"],
     "plugins": []
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.js"],
   "exclude": ["build", "node_modules"]
 }

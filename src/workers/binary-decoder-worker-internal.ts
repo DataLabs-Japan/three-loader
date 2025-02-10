@@ -2,7 +2,6 @@
  * Adapted from Potree.js http://potree.org
  * Potree License: https://github.com/potree/potree/blob/1.5/LICENSE
  */
-
 import {
   IPointAttribute,
   IPointAttributes,
@@ -43,6 +42,10 @@ interface Ctx {
 export function handleMessage(event: MessageEvent) {
   const buffer = event.data.buffer;
   const pointAttributes: IPointAttributes = event.data.pointAttributes;
+
+  if (!buffer) {
+    return;
+  }
 
   const ctx: Ctx = {
     attributeBuffers: {},

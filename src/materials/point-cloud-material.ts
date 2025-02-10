@@ -5,6 +5,7 @@ import {
   Color,
   LessEqualDepth,
   Material,
+  Matrix4,
   NearestFilter,
   NoBlending,
   PerspectiveCamera,
@@ -47,6 +48,9 @@ import {
 } from './texture-generation';
 import { IClassification, IGradient, IUniform } from './types';
 
+import fragShader from './shaders/pointcloud.frag';
+import vertShader from './shaders/pointcloud.vert';
+
 export interface IPointCloudMaterialParameters {
   size: number;
   minSize: number;
@@ -65,6 +69,7 @@ export interface IPointCloudMaterialUniforms {
   clipExtent: IUniform<[number, number, number, number]>;
   depthMap: IUniform<Texture | null>;
   diffuse: IUniform<[number, number, number]>;
+  dimOutsideMask: IUniform<boolean>;
   fov: IUniform<number>;
   gradient: IUniform<Texture>;
   heightMax: IUniform<number>;
@@ -112,6 +117,7 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorX: IUniform<number>;
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
+  maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3 }[]>;
 }
 
 const TREE_TYPE_DEFS = {
@@ -187,6 +193,8 @@ export class PointCloudMaterial extends RawShaderMaterial {
     this._classification,
   );
 
+  maskRegionLength = 0;
+
   uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>> = {
     bbSize: makeUniform('fv', [0, 0, 0] as [number, number, number]),
     blendDepthSupplement: makeUniform('f', 0.0),
@@ -197,6 +205,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     clipExtent: makeUniform('fv', [0.0, 0.0, 1.0, 1.0] as [number, number, number, number]),
     depthMap: makeUniform('t', null),
     diffuse: makeUniform('fv', [1, 1, 1] as [number, number, number]),
+    dimOutsideMask: makeUniform('b', false),
     fov: makeUniform('f', 1.0),
     gradient: makeUniform('t', this.gradientTexture || new Texture()),
     heightMax: makeUniform('f', 1.0),
@@ -246,11 +255,13 @@ export class PointCloudMaterial extends RawShaderMaterial {
     stripeDivisorX: makeUniform('f', 2),
     stripeDivisorY: makeUniform('f', 2),
     pointCloudMixAngle: makeUniform('f', 31),
+    maskRegions: makeUniform('a', []),
   };
 
   @uniform('bbSize') bbSize!: [number, number, number];
   @uniform('clipExtent') clipExtent!: [number, number, number, number];
   @uniform('depthMap') depthMap!: Texture | undefined;
+  @uniform('dimOutsideMask') dimOutsideMask!: boolean;
   @uniform('fov') fov!: number;
   @uniform('heightMax') heightMax!: number;
   @uniform('heightMin') heightMin!: number;
@@ -258,6 +269,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('intensityContrast') intensityContrast!: number;
   @uniform('intensityGamma') intensityGamma!: number;
   @uniform('intensityRange') intensityRange!: [number, number];
+  @uniform('maskRegions') maskRegions!: { modelMatrix: Matrix4; min: Vector3; max: Vector3 }[];
   @uniform('maxSize') maxSize!: number;
   @uniform('minSize') minSize!: number;
   @uniform('octreeSize') octreeSize!: number;
@@ -379,21 +391,33 @@ export class PointCloudMaterial extends RawShaderMaterial {
     this.visibleNodeTextureOffsets.clear();
   }
 
+  enableTransparency(): void {
+    this.blending = AdditiveBlending;
+    this.transparent = true;
+    this.depthTest = false;
+    this.depthWrite = true;
+  }
+
+  disableTransparency(): void {
+    this.blending = NoBlending;
+    this.transparent = false;
+    this.depthTest = true;
+    this.depthWrite = true;
+    this.depthFunc = LessEqualDepth;
+  }
+
+  updateShaders(): void {
+    this.vertexShader = this.applyDefines(vertShader);
+    this.fragmentShader = this.applyDefines(fragShader);
+  }
+
   updateShaderSource(): void {
-    this.vertexShader = this.applyDefines(require('./shaders/pointcloud.vert').default);
-    this.fragmentShader = this.applyDefines(require('./shaders/pointcloud.frag').default);
+    this.updateShaders();
 
     if (this.opacity === 1.0) {
-      this.blending = NoBlending;
-      this.transparent = false;
-      this.depthTest = true;
-      this.depthWrite = true;
-      this.depthFunc = LessEqualDepth;
+      this.disableTransparency();
     } else if (this.opacity < 1.0 && !this.useEDL) {
-      this.blending = AdditiveBlending;
-      this.transparent = true;
-      this.depthTest = false;
-      this.depthWrite = true;
+      this.enableTransparency();
     }
 
     if (this.weighted) {
@@ -462,6 +486,11 @@ export class PointCloudMaterial extends RawShaderMaterial {
 
     if (this.colorRgba) {
       define('color_rgba');
+    }
+
+    if (this.maskRegionLength > 0) {
+      define(`mask_region_length ${this.maskRegionLength}`);
+      define('override_opacity true');
     }
 
     define('MAX_POINT_LIGHTS 0');

@@ -99,6 +99,7 @@ uniform sampler2D depthMap;
 #endif
 
 varying vec3 vColor;
+varying vec3 overridedColor;
 
 #if !defined(color_type_point_index)
 	varying float vOpacity;
@@ -409,7 +410,35 @@ vec3 getCompositeColor() {
 	return c;
 }
 
+/**
+ * Converts a float-based hex color to an RGB vec3.
+ * The hex color should be in the format RRGGBB (e.g., 16711680 for 0xFF0000).
+ * @param hex A float representing the hex color (e.g., 16711680 for red).
+ * @return The RGB color as a vec3 (values in [0,1]).
+ */
+vec3 hexToRGB(float hex) {
+    float r = floor(hex / 65536.0);
+    float g = floor(mod(hex, 65536.0) / 256.0);
+    float b = mod(hex, 256.0);
+    return vec3(r, g, b) / 255.0;
+}
+
+/**
+ * Linearly interpolates between two hex colors based on a value in the range [0, 1].
+ * @param color1 The first hex color (e.g., 0xFF0000 for red).
+ * @param color2 The second hex color (e.g., 0x0000FF for blue).
+ * @param t A float in the range [0,1] indicating the interpolation factor.
+ * @return The interpolated RGB color as a vec3.
+ */
+vec3 getColorStop(float color1, float color2, float t) {
+    vec3 c1 = hexToRGB(color1);
+    vec3 c2 = hexToRGB(color2);
+    return mix(c1, c2, clamp(t, 0.0, 1.0));
+}
+varying vec4 fragPosition;
+
 void main() {
+	fragPosition = modelMatrix * vec4(position, 1.0);
 	vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
 
 	gl_Position = projectionMatrix * mvPosition;
@@ -455,6 +484,8 @@ void main() {
 	#endif
 
 	gl_PointSize = pointSize;
+	// overridedColor = getColorStop(65280.0, 16711680.0, pointSize/maxSize);
+	overridedColor = getColorStop(65280.0, 16711680.0, getLOD());
 
 	// ---------------------
 	// HIGHLIGHTING

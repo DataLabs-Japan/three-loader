@@ -90,7 +90,11 @@ export class Viewer {
    * @param baseUrl
    *    The url where the point cloud is located and from where we should load the octree nodes.
    */
-  load(fileName: string, baseUrl: string, version: PotreeVersion = "v1"): Promise<PointCloudOctree> {
+  load(
+    fileName: string,
+    baseUrl: string,
+    version: PotreeVersion = 'v1',
+  ): Promise<PointCloudOctree> {
     const loader = version === 'v1' ? this.potree_v1 : this.potree_v2;
     return loader.loadPointCloud(
       // The file name of the point cloud which is to be loaded.

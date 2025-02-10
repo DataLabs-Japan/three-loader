@@ -46,6 +46,7 @@ uniform sampler2D depthMap;
 #endif
 
 varying vec3 vColor;
+varying vec3 overridedColor;
 
 #if !defined(color_type_point_index)
 	varying float vOpacity;
@@ -77,7 +78,47 @@ varying vec3 vColor;
 
 float specularStrength = 1.0;
 
+#if defined mask_region_length
+	struct Region {
+		mat4 modelMatrix;
+		vec3 min;
+		vec3 max;
+	};
+	uniform bool dimOutsideMask;
+	uniform Region maskRegions[mask_region_length];
+	varying vec4 fragPosition;
+
+	bool checkWithin(Region region)
+	{
+		// we need fragment position localized to the mask region
+		vec4 localPos = region.modelMatrix * fragPosition;
+
+		// Check if the fragment is inside the cube in its local space
+		return all(greaterThanEqual(localPos.xyz, region.min)) && all(lessThanEqual(localPos.xyz, region.max));
+	}
+#endif
+
 void main() {
+	#if defined mask_region_length
+		bool toDiscard = !dimOutsideMask;
+		float defaultOpacity = opacity;
+		float updatedOpacity = dimOutsideMask ? 0.1 : 0.0;
+
+		for(int i=0; i<mask_region_length; i++)
+		{
+			if (checkWithin(maskRegions[i]))
+			{
+				updatedOpacity = defaultOpacity;
+				toDiscard = false;
+			}
+		}
+
+		if (toDiscard) {
+			discard;
+			return;
+		}
+	#endif
+
 	vec3 color = vColor;
 	float depth = gl_FragCoord.z;
 
@@ -314,5 +355,11 @@ void main() {
 		if (vHighlight > 0.0) {
 			gl_FragColor = highlightedPointColor;
 		}
+	#endif
+
+	// gl_FragColor = vec4(overridedColor, 0.2);
+
+	#ifdef override_opacity
+		gl_FragColor.a = updatedOpacity;
 	#endif
 }
