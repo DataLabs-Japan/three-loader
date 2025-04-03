@@ -56,10 +56,6 @@ export interface IPointCloudMaterialUniforms {
     wSourceID: IUniform<number>;
     opacityAttenuation: IUniform<number>;
     filterByNormalThreshold: IUniform<number>;
-    highlightedPointCoordinate: IUniform<Vector3>;
-    highlightedPointColor: IUniform<Vector4>;
-    enablePointHighlighting: IUniform<boolean>;
-    highlightedPointScale: IUniform<number>;
     normalFilteringMode: IUniform<number>;
     backgroundMap: IUniform<Texture | null>;
     pointCloudID: IUniform<number>;
@@ -74,6 +70,17 @@ export interface IPointCloudMaterialUniforms {
         min: Vector3;
         max: Vector3;
     }[]>;
+    highlightedType: IUniform<number>;
+    highlightedPoint0: IUniform<Vector3>;
+    highlightedPoint1: IUniform<Vector3>;
+    highlightedPoint2: IUniform<Vector3>;
+    highlightedMinDistance: IUniform<number>;
+    highlightedMaxDistance: IUniform<number>;
+    highlightedDistanceProximityThreshold: IUniform<number>;
+    enablePointHighlighting: IUniform<boolean>;
+    highlightedPointCoordinate: IUniform<Vector3>;
+    highlightedPointColor: IUniform<Vector4>;
+    highlightedPointScale: IUniform<number>;
 }
 export declare class PointCloudMaterial extends RawShaderMaterial {
     private static helperVec3;
@@ -133,10 +140,6 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     weightSourceID: number;
     opacityAttenuation: number;
     filterByNormalThreshold: number;
-    highlightedPointCoordinate: Vector3;
-    highlightedPointColor: Vector4;
-    enablePointHighlighting: boolean;
-    highlightedPointScale: number;
     normalFilteringMode: number;
     backgroundMap: Texture | undefined;
     pointCloudID: number;
@@ -146,6 +149,17 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     stripeDivisorX: number;
     stripeDivisorY: number;
     pointCloudMixAngle: number;
+    highlightedType: number;
+    highlightedPoint0: Vector3;
+    highlightedPoint1: Vector3;
+    highlightedPoint2: Vector3;
+    highlightedMinDistance: number;
+    highlightedMaxDistance: number;
+    highlightedDistanceProximityThreshold: number;
+    enablePointHighlighting: boolean;
+    highlightedPointCoordinate: Vector3;
+    highlightedPointColor: Vector4;
+    highlightedPointScale: number;
     useClipBox: boolean;
     weighted: boolean;
     pointColorType: PointColorType;

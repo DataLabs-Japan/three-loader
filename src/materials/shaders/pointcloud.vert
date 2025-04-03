@@ -437,8 +437,57 @@ vec3 getColorStop(float color1, float color2, float t) {
 }
 varying vec4 fragPosition;
 
+varying float vIsHighlighted;
+
+uniform vec3 highlightedPoint0;
+uniform vec3 highlightedPoint1;
+uniform vec3 highlightedPoint2;
+uniform float highlightedMinDistance;
+uniform float highlightedMaxDistance;
+uniform float highlightedDistanceProximityThreshold;
+uniform int highlightedType;
+
+/**
+	* Computes the perpendicular intersection of a point onto a line defined by two points.
+	* @param p1 - First point of the line.
+	* @param p2 - Second point of the line.
+	* @param p3 - Point to project onto the line.
+	* @returns The intersection point.
+	*/
+vec3 getPerpendicularIntersection(vec3 p1, vec3 p2, vec3 p3) {
+	vec3 lineDir = normalize(p2 - p1); // Line direction unit vector
+	vec3 p1ToP3 = p3 - p1; // Vector from P1 to P3
+
+	float projectionLength = dot(p1ToP3, lineDir); // Projection scalar
+	vec3 intersection = p1 + lineDir * projectionLength; // Compute intersection
+
+	return intersection;
+}
+
 void main() {
 	fragPosition = modelMatrix * vec4(position, 1.0);
+	vec3 vAnchor0Position = highlightedPoint0;
+	float vMinDistance = highlightedMinDistance;
+	float vMaxDistance = highlightedMaxDistance;
+
+	vIsHighlighted = 0.0;
+
+	if (highlightedType == 2) {
+		float distance = distance(fragPosition.xyz, highlightedPoint0);
+		
+		// anything within min/max distance will be highlighted
+		if (distance > vMinDistance && distance < vMaxDistance) {
+			vIsHighlighted = 1.0;
+		}
+	} else if (highlightedType == 3) {
+		vec3 currPerpPosition = getPerpendicularIntersection(highlightedPoint0, highlightedPoint1, fragPosition.xyz);
+		float perpDistance = distance(highlightedPoint2, currPerpPosition);  // Distance between calculated perpendicular and target perpendicular
+		float currDistance = distance(currPerpPosition, fragPosition.xyz);   // Distance between current position and calculated perpendicular
+
+		if (currDistance >= highlightedMinDistance  && currDistance <= highlightedMaxDistance  && perpDistance <= highlightedDistanceProximityThreshold) {
+			vIsHighlighted = 1.0;
+		}
+	}
 	vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
 
 	gl_Position = projectionMatrix * mvPosition;

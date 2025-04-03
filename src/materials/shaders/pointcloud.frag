@@ -98,6 +98,14 @@ float specularStrength = 1.0;
 	}
 #endif
 
+varying float vIsHighlighted;
+uniform int highlightedType;
+uniform int step2;
+
+vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
+	return vec4(mix(originalColor.rgb, tintColor, intensity), originalColor.a);
+}
+
 void main() {
 	#if defined mask_region_length
 		bool toDiscard = !dimOutsideMask;
@@ -125,12 +133,12 @@ void main() {
 	#if defined (clip_horizontally) || defined (clip_vertically)
 	vec2 ndc = vec2((gl_FragCoord.x / screenWidth), 1.0 - (gl_FragCoord.y / screenHeight));
 
-	if(step(clipExtent.x, ndc.x) * step(ndc.x, clipExtent.z) < 1.0)
+	if(highlightedType(clipExtent.x, ndc.x) * highlightedType(ndc.x, clipExtent.z) < 1.0)
 	{
 		discard;
 	}
 
-	if(step(clipExtent.y, ndc.y) * step(ndc.y, clipExtent.w) < 1.0)
+	if(highlightedType(clipExtent.y, ndc.y) * highlightedType(ndc.y, clipExtent.w) < 1.0)
 	{
 		discard;
 	}
@@ -362,4 +370,10 @@ void main() {
 	#ifdef override_opacity
 		gl_FragColor.a = updatedOpacity;
 	#endif
+
+	if (highlightedType == 2 || highlightedType == 3) {
+		if (vIsHighlighted == 1.0) {
+			gl_FragColor = addTint(gl_FragColor, vec3(0.75, 1.0, 0.0), 0.7);
+		}
+	}
 }
