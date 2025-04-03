@@ -104,10 +104,6 @@ export interface IPointCloudMaterialUniforms {
   wSourceID: IUniform<number>;
   opacityAttenuation: IUniform<number>;
   filterByNormalThreshold: IUniform<number>;
-  highlightedPointCoordinate: IUniform<Vector3>;
-  highlightedPointColor: IUniform<Vector4>;
-  enablePointHighlighting: IUniform<boolean>;
-  highlightedPointScale: IUniform<number>;
   normalFilteringMode: IUniform<number>;
   backgroundMap: IUniform<Texture | null>;
   pointCloudID: IUniform<number>;
@@ -118,6 +114,25 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
   maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3 }[]>;
+
+  // point highlighting based on constraints
+  // 0 - no highlighting
+  // 1 - specific point
+  // 2 - distance from point0 (spherical)
+  // 3 - perpendicular of point2 to a line between point0 and point1 (ring)
+  highlightedType: IUniform<number>;
+  highlightedPoint0: IUniform<Vector3>;
+  highlightedPoint1: IUniform<Vector3>;
+  highlightedPoint2: IUniform<Vector3>;
+  highlightedMinDistance: IUniform<number>;
+  highlightedMaxDistance: IUniform<number>;
+  highlightedDistanceProximityThreshold: IUniform<number>;
+
+  // original of three-loader
+  enablePointHighlighting: IUniform<boolean>;
+  highlightedPointCoordinate: IUniform<Vector3>;
+  highlightedPointColor: IUniform<Vector4>;
+  highlightedPointScale: IUniform<number>;
 }
 
 const TREE_TYPE_DEFS = {
@@ -242,10 +257,6 @@ export class PointCloudMaterial extends RawShaderMaterial {
     wSourceID: makeUniform('f', 0),
     opacityAttenuation: makeUniform('f', 1),
     filterByNormalThreshold: makeUniform('f', 0),
-    highlightedPointCoordinate: makeUniform('fv', new Vector3()),
-    highlightedPointColor: makeUniform('fv', DEFAULT_HIGHLIGHT_COLOR.clone()),
-    enablePointHighlighting: makeUniform('b', true),
-    highlightedPointScale: makeUniform('f', 2.0),
     backgroundMap: makeUniform('t', null),
     normalFilteringMode: makeUniform('i', NormalFilteringMode.ABSOLUTE_NORMAL_FILTERING_MODE),
     pointCloudID: makeUniform('f', 2),
@@ -255,7 +266,21 @@ export class PointCloudMaterial extends RawShaderMaterial {
     stripeDivisorX: makeUniform('f', 2),
     stripeDivisorY: makeUniform('f', 2),
     pointCloudMixAngle: makeUniform('f', 31),
+
     maskRegions: makeUniform('a', []),
+
+    highlightedType: makeUniform('i', 0),
+    highlightedPoint0: makeUniform('fv', new Vector3()),
+    highlightedPoint1: makeUniform('fv', new Vector3()),
+    highlightedPoint2: makeUniform('fv', new Vector3()),
+    highlightedMinDistance: makeUniform('f', 0),
+    highlightedMaxDistance: makeUniform('f', 0),
+    highlightedDistanceProximityThreshold: makeUniform('f', 0.005),
+
+    enablePointHighlighting: makeUniform('b', true),
+    highlightedPointCoordinate: makeUniform('fv', new Vector3()),
+    highlightedPointColor: makeUniform('fv', DEFAULT_HIGHLIGHT_COLOR.clone()),
+    highlightedPointScale: makeUniform('f', 2.0),
   };
 
   @uniform('bbSize') bbSize!: [number, number, number];
@@ -291,10 +316,6 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('wSourceID') weightSourceID!: number;
   @uniform('opacityAttenuation') opacityAttenuation!: number;
   @uniform('filterByNormalThreshold') filterByNormalThreshold!: number;
-  @uniform('highlightedPointCoordinate') highlightedPointCoordinate!: Vector3;
-  @uniform('highlightedPointColor') highlightedPointColor!: Vector4;
-  @uniform('enablePointHighlighting') enablePointHighlighting!: boolean;
-  @uniform('highlightedPointScale') highlightedPointScale!: number;
   @uniform('normalFilteringMode') normalFilteringMode!: number;
   @uniform('backgroundMap') backgroundMap!: Texture | undefined;
   @uniform('pointCloudID') pointCloudID!: number;
@@ -304,6 +325,19 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('stripeDivisorX') stripeDivisorX!: number;
   @uniform('stripeDivisorY') stripeDivisorY!: number;
   @uniform('pointCloudMixAngle') pointCloudMixAngle!: number;
+
+  @uniform('highlightedType') highlightedType!: number;
+  @uniform('highlightedPoint0') highlightedPoint0!: Vector3;
+  @uniform('highlightedPoint1') highlightedPoint1!: Vector3;
+  @uniform('highlightedPoint2') highlightedPoint2!: Vector3;
+  @uniform('highlightedMinDistance') highlightedMinDistance!: number;
+  @uniform('highlightedMaxDistance') highlightedMaxDistance!: number;
+  @uniform('highlightedDistanceProximityThreshold') highlightedDistanceProximityThreshold!: number;
+
+  @uniform('enablePointHighlighting') enablePointHighlighting!: boolean;
+  @uniform('highlightedPointCoordinate') highlightedPointCoordinate!: Vector3;
+  @uniform('highlightedPointColor') highlightedPointColor!: Vector4;
+  @uniform('highlightedPointScale') highlightedPointScale!: number;
 
   @requiresShaderUpdate() useClipBox: boolean = false;
   @requiresShaderUpdate() weighted: boolean = false;
