@@ -77,6 +77,7 @@ export interface IPointCloudMaterialUniforms {
     highlightedMinDistance: IUniform<number>;
     highlightedMaxDistance: IUniform<number>;
     highlightedDistanceProximityThreshold: IUniform<number>;
+    highlightedOuterOpacity: IUniform<number>;
     enablePointHighlighting: IUniform<boolean>;
     highlightedPointCoordinate: IUniform<Vector3>;
     highlightedPointColor: IUniform<Vector4>;
@@ -156,6 +157,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     highlightedMinDistance: number;
     highlightedMaxDistance: number;
     highlightedDistanceProximityThreshold: number;
+    highlightedOuterOpacity: number;
     enablePointHighlighting: boolean;
     highlightedPointCoordinate: Vector3;
     highlightedPointColor: Vector4;

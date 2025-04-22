@@ -127,6 +127,7 @@ export interface IPointCloudMaterialUniforms {
   highlightedMinDistance: IUniform<number>;
   highlightedMaxDistance: IUniform<number>;
   highlightedDistanceProximityThreshold: IUniform<number>;
+  highlightedOuterOpacity: IUniform<number>; // opacity of the non-highlighted points
 
   // original of three-loader
   enablePointHighlighting: IUniform<boolean>;
@@ -276,6 +277,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     highlightedMinDistance: makeUniform('f', 0),
     highlightedMaxDistance: makeUniform('f', 0),
     highlightedDistanceProximityThreshold: makeUniform('f', 0.005),
+    highlightedOuterOpacity: makeUniform('f', 1),
 
     enablePointHighlighting: makeUniform('b', true),
     highlightedPointCoordinate: makeUniform('fv', new Vector3()),
@@ -333,6 +335,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('highlightedMinDistance') highlightedMinDistance!: number;
   @uniform('highlightedMaxDistance') highlightedMaxDistance!: number;
   @uniform('highlightedDistanceProximityThreshold') highlightedDistanceProximityThreshold!: number;
+  @uniform('highlightedOuterOpacity') highlightedOuterOpacity!: number;
 
   @uniform('enablePointHighlighting') enablePointHighlighting!: boolean;
   @uniform('highlightedPointCoordinate') highlightedPointCoordinate!: Vector3;

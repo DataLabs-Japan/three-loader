@@ -101,6 +101,7 @@ float specularStrength = 1.0;
 varying float vIsHighlighted;
 uniform int highlightedType;
 uniform int step2;
+uniform float highlightedOuterOpacity;
 
 vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
 	return vec4(mix(originalColor.rgb, tintColor, intensity), originalColor.a);
@@ -374,6 +375,8 @@ void main() {
 	if (highlightedType == 2 || highlightedType == 3) {
 		if (vIsHighlighted == 1.0) {
 			gl_FragColor = addTint(gl_FragColor, vec3(0.75, 1.0, 0.0), 0.7);
+		} else {
+			gl_FragColor = vec4(gl_FragColor.rgb, highlightedOuterOpacity);
 		}
 	}
 }
