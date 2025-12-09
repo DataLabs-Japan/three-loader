@@ -136,7 +136,7 @@ void main() {
 		// else, fragment is within at least one mask region, get the max opacity among all overlapping mask regions the fragment is within.
 		// 1. discard fragment when max opacity <= 0.0
 		// 2. keep fragment when max opacity > 0.0, along with setting its opacity to the max opacity
-		else{
+		else {
 			for (int i = 0; i < mask_region_length; i++) {
 				if (checkWithin(maskRegions[i])) {
 					updatedOpacity = max(updatedOpacity, maskRegions[i].opacity);
