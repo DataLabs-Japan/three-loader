@@ -16,3 +16,5 @@ examples/index.html
 node_modules
 yarn-error.log
 size-plugin.json
+dist/
+package-lock.json
