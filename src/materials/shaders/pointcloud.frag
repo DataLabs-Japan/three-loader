@@ -83,8 +83,9 @@ float specularStrength = 1.0;
 		mat4 modelMatrix;
 		vec3 min;
 		vec3 max;
+		float opacity;
 	};
-	uniform bool dimOutsideMask;
+	uniform float opacityOutOfMasks;
 	uniform Region maskRegions[mask_region_length];
 	varying vec4 fragPosition;
 
@@ -109,20 +110,26 @@ vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
 
 void main() {
 	#if defined mask_region_length
-		bool toDiscard = !dimOutsideMask;
-		float defaultOpacity = opacity;
-		float updatedOpacity = dimOutsideMask ? 0.1 : 0.0;
+		bool isFragmentInAnyMaskRegions = false;
+		float updatedOpacity = 0.0;
 
-		for(int i=0; i<mask_region_length; i++)
-		{
-			if (checkWithin(maskRegions[i]))
-			{
-				updatedOpacity = defaultOpacity;
-				toDiscard = false;
+		// check whether this fragment is inside any mask regions.
+		// if fragment is within a mask region,
+		// set the fragment's opacity to the max opacity found among all overlapping mask regions the fragment is within.
+		for (int i = 0; i < mask_region_length; i++) {
+			if (checkWithin(maskRegions[i])) {
+				isFragmentInAnyMaskRegions = true;
+				updatedOpacity = max(updatedOpacity, maskRegions[i].opacity);
 			}
 		}
 
-		if (toDiscard) {
+		// if this fragment is outside all mask regions, set the fragment's opacity to opacityOutOfMasks.
+		if (!isFragmentInAnyMaskRegions) {
+			updatedOpacity = opacityOutOfMasks;
+		}
+
+		// discard fragment if fragment's opacity <= 0.0
+		if (updatedOpacity <= 0.0) {
 			discard;
 			return;
 		}

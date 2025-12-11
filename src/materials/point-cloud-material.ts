@@ -69,7 +69,7 @@ export interface IPointCloudMaterialUniforms {
   clipExtent: IUniform<[number, number, number, number]>;
   depthMap: IUniform<Texture | null>;
   diffuse: IUniform<[number, number, number]>;
-  dimOutsideMask: IUniform<boolean>;
+  opacityOutOfMasks: IUniform<number>;
   fov: IUniform<number>;
   gradient: IUniform<Texture>;
   heightMax: IUniform<number>;
@@ -113,7 +113,7 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorX: IUniform<number>;
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
-  maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3 }[]>;
+  maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3; opacity: number }[]>;
 
   // point highlighting based on constraints
   // 0 - no highlighting
@@ -221,7 +221,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     clipExtent: makeUniform('fv', [0.0, 0.0, 1.0, 1.0] as [number, number, number, number]),
     depthMap: makeUniform('t', null),
     diffuse: makeUniform('fv', [1, 1, 1] as [number, number, number]),
-    dimOutsideMask: makeUniform('b', false),
+    opacityOutOfMasks: makeUniform('f', 1.0),
     fov: makeUniform('f', 1.0),
     gradient: makeUniform('t', this.gradientTexture || new Texture()),
     heightMax: makeUniform('f', 1.0),
@@ -288,7 +288,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('bbSize') bbSize!: [number, number, number];
   @uniform('clipExtent') clipExtent!: [number, number, number, number];
   @uniform('depthMap') depthMap!: Texture | undefined;
-  @uniform('dimOutsideMask') dimOutsideMask!: boolean;
+  @uniform('opacityOutOfMasks') opacityOutOfMasks!: number;
   @uniform('fov') fov!: number;
   @uniform('heightMax') heightMax!: number;
   @uniform('heightMin') heightMin!: number;
@@ -296,7 +296,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('intensityContrast') intensityContrast!: number;
   @uniform('intensityGamma') intensityGamma!: number;
   @uniform('intensityRange') intensityRange!: [number, number];
-  @uniform('maskRegions') maskRegions!: { modelMatrix: Matrix4; min: Vector3; max: Vector3 }[];
+  @uniform('maskRegions') maskRegions!: { modelMatrix: Matrix4; min: Vector3; max: Vector3; opacity: number }[];
   @uniform('maxSize') maxSize!: number;
   @uniform('minSize') minSize!: number;
   @uniform('octreeSize') octreeSize!: number;

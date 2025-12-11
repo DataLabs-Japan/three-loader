@@ -21,7 +21,7 @@ export interface IPointCloudMaterialUniforms {
     clipExtent: IUniform<[number, number, number, number]>;
     depthMap: IUniform<Texture | null>;
     diffuse: IUniform<[number, number, number]>;
-    dimOutsideMask: IUniform<boolean>;
+    opacityOutOfMasks: IUniform<number>;
     fov: IUniform<number>;
     gradient: IUniform<Texture>;
     heightMax: IUniform<number>;
@@ -69,6 +69,7 @@ export interface IPointCloudMaterialUniforms {
         modelMatrix: Matrix4;
         min: Vector3;
         max: Vector3;
+        opacity: number;
     }[]>;
     highlightedType: IUniform<number>;
     highlightedPoint0: IUniform<Vector3>;
@@ -107,7 +108,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     bbSize: [number, number, number];
     clipExtent: [number, number, number, number];
     depthMap: Texture | undefined;
-    dimOutsideMask: boolean;
+    opacityOutOfMasks: number;
     fov: number;
     heightMax: number;
     heightMin: number;
@@ -119,6 +120,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
         modelMatrix: Matrix4;
         min: Vector3;
         max: Vector3;
+        opacity: number;
     }[];
     maxSize: number;
     minSize: number;
