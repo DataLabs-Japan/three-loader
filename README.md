@@ -8,7 +8,7 @@ If you have a need for such auxiliary components/tools, we would most definitely
 
 And of course, suggestions for better/easier APIs or new features, as well as PRs, are very welcome too!
 
-# Usage
+## Usage
 
 ```typescript
 import { Scene } from 'three';
@@ -52,7 +52,7 @@ function update() {
 
 You can play with a live example here: https://codesandbox.io/s/yw2p3446j9?autoresize=1&view=preview
 
-# Local Development
+## Local Development
 
 To develop and contribute to the project, you need to start by cloning the repositry and then install all the dependencies with yarn:
 
@@ -78,14 +78,14 @@ To create a production-ready build of the library which can be published to NPM,
 > yarn build
 ```
 
-# Thank You!
+## Thank You!
 
 Thank you to Markus Schütz for his work on Potree, on which this project is based.
 
-# Contributors
+## Contributors
 
-## Pix4D
+### Pix4D
 
 We use this as part of our online 3D model viewer (http://cloud.pix4d.com).
 
-## Georepublic
+### Georepublic
