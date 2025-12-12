@@ -54,7 +54,7 @@ You can play with a live example here: https://codesandbox.io/s/yw2p3446j9?autor
 
 ## Local Development
 
-To develop and contribute to the project, you need to start by cloning the repositry and then install all the dependencies with yarn:
+To develop and contribute to the project, you need to start by cloning the repository and then install all the dependencies with yarn:
 
 ```bash
 > yarn
@@ -83,7 +83,7 @@ To create a production-ready build of the library which can be published to NPM,
 We commit the built files in the `dist/` folder to the repository.
 These files are then consumed directly by the client code (frontend codes of DataLabs products) by being imported with package management tools such as `yarn`.
 
-## release process
+## Release Process
 
 The client codes often need to specify the version of this library to use. To this end, we need to create a new release with appropriate granularity in the following way:
 
