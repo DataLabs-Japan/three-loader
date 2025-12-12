@@ -78,6 +78,19 @@ To create a production-ready build of the library which can be published to NPM,
 > yarn build
 ```
 
+## Note on how this library is used in the client code
+
+We commit the built files in the `dist/` folder to the repository.
+These files are then consumed directly by the client code (frontend codes of DataLabs products) by being imported with package management tools such as `yarn`.
+
+## release process
+
+The client codes often need to specify the version of this library to use. To this end, we need to create a new release with appropriate granularity in the following way:
+
+1. Run `yarn build` and commit the updated files in the `dist/` folder.
+2. Bump the version in `package.json`.
+3. Create a release for this repo, with creating a git tag for the new version.
+
 ## Thank You!
 
 Thank you to Markus Schütz for his work on Potree, on which this project is based.
