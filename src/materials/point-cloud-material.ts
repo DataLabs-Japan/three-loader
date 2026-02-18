@@ -296,7 +296,12 @@ export class PointCloudMaterial extends RawShaderMaterial {
   @uniform('intensityContrast') intensityContrast!: number;
   @uniform('intensityGamma') intensityGamma!: number;
   @uniform('intensityRange') intensityRange!: [number, number];
-  @uniform('maskRegions') maskRegions!: { modelMatrix: Matrix4; min: Vector3; max: Vector3; opacity: number }[];
+  @uniform('maskRegions') maskRegions!: {
+    modelMatrix: Matrix4;
+    min: Vector3;
+    max: Vector3;
+    opacity: number;
+  }[];
   @uniform('maxSize') maxSize!: number;
   @uniform('minSize') minSize!: number;
   @uniform('octreeSize') octreeSize!: number;

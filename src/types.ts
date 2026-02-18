@@ -1,9 +1,27 @@
-import { Box3, BufferGeometry, Camera, Sphere, Vector3, WebGLRenderer } from 'three';
+import { Box3, BufferGeometry, Camera, Matrix4, Sphere, Vector3, WebGLRenderer } from 'three';
 import { GetUrlFn, XhrRequest } from './loading/types';
 import { OctreeGeometry } from './loading2/octree-geometry';
 import { PointCloudOctree } from './point-cloud-octree';
 import { PointCloudOctreeGeometry } from './point-cloud-octree-geometry';
 import { LRU } from './utils/lru';
+
+export interface MaskRegion {
+  /** Transformation matrix for the mask region */
+  modelMatrix: Matrix4;
+  /** Minimum bounds in local space */
+  min: Vector3;
+  /** Maximum bounds in local space */
+  max: Vector3;
+  /** Opacity for points inside this mask region (0 = invisible, 1 = fully visible) */
+  opacity: number;
+}
+
+export interface MaskConfig {
+  /** Array of mask regions */
+  regions: MaskRegion[];
+  /** Default opacity for points not inside any mask region */
+  defaultOpacity: number;
+}
 
 export interface IPointCloudTreeNode {
   id: number;

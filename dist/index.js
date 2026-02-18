@@ -4001,6 +4001,38 @@ class Box3Helper extends LineSegments {
         super(geometry, material);
     }
 }
+/**
+ * Clear a helper plane mesh from the object.
+ * Provide Scene if object was added directly to the scene.
+ *
+ * Removes all children from the object with the given name.
+ *
+ * @param object The Three.js Parent object to remove the helper from.
+ * @param name The name of the helper mesh to remove.
+ */
+const clearHelper = (object, name) => {
+    object.children
+        .filter(child => child.name === name)
+        .forEach(child => {
+        object.remove(child);
+    });
+};
+/**
+ * Add a Box3Helper to visualize a Box3 in the scene.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param color Color of the helper lines
+ */
+const addBox3Helper = (scene, name, box, color = 0x00ff00) => {
+    clearHelper(scene, name);
+    const boxHelper = new Box3Helper(box, new Color(color));
+    boxHelper.name = name;
+    boxHelper.userData.type = 'debug';
+    scene.add(boxHelper);
+    return boxHelper;
+};
 
 class LRUItem {
     constructor(node) {
@@ -4159,6 +4191,10 @@ class Potree {
         this.maxNumNodesLoading = MAX_NUM_NODES_LOADING;
         this.features = FEATURES;
         this.lru = new LRU(this._pointBudget);
+        this.maskConfig = {
+            regions: [],
+            defaultOpacity: 1.0,
+        };
         this.updateVisibilityStructures = (() => {
             const frustumMatrix = new Matrix4();
             const inverseWorldMatrix = new Matrix4();
@@ -4166,7 +4202,7 @@ class Potree {
             return (pointClouds, camera) => {
                 const frustums = [];
                 const cameraPositions = [];
-                const priorityQueue = new BinaryHeap((x) => 1 / x.weight);
+                const priorityQueue = new BinaryHeap(x => 1 / x.weight);
                 for (let i = 0; i < pointClouds.length; i++) {
                     const pointCloud = pointClouds[i];
                     if (!pointCloud.initialized()) {
@@ -4179,11 +4215,18 @@ class Potree {
                     // Furstum in object space.
                     const inverseViewMatrix = camera.matrixWorldInverse;
                     const worldMatrix = pointCloud.matrixWorld;
-                    frustumMatrix.identity().multiply(camera.projectionMatrix).multiply(inverseViewMatrix).multiply(worldMatrix);
+                    frustumMatrix
+                        .identity()
+                        .multiply(camera.projectionMatrix)
+                        .multiply(inverseViewMatrix)
+                        .multiply(worldMatrix);
                     frustums.push(new Frustum().setFromProjectionMatrix(frustumMatrix));
                     // Camera position in object space
                     inverseWorldMatrix.copy(worldMatrix).invert();
-                    cameraMatrix.identity().multiply(inverseWorldMatrix).multiply(camera.matrixWorld);
+                    cameraMatrix
+                        .identity()
+                        .multiply(inverseWorldMatrix)
+                        .multiply(camera.matrixWorld);
                     cameraPositions.push(new Vector3().setFromMatrixPosition(cameraMatrix));
                     if (pointCloud.visible && pointCloud.root !== null) {
                         const weight = Number.MAX_VALUE;
@@ -4203,7 +4246,89 @@ class Potree {
         this.loadGeometry = GEOMETRY_LOADERS[version];
     }
     loadPointCloud(url, getUrl, xhrRequest = (input, init) => fetch(input, init)) {
-        return this.loadGeometry(url, getUrl, xhrRequest).then((geometry) => new PointCloudOctree(this, geometry));
+        return this.loadGeometry(url, getUrl, xhrRequest).then(geometry => new PointCloudOctree(this, geometry));
+    }
+    /**
+     * Set mask regions for visibility filtering and opacity control.
+     *
+     * @param config Mask configuration with regions and default opacity
+     * @param scene Optional Three.js scene to add debug helpers for mask regions. If not provided, no helpers will be added.
+     *
+     * @example
+     * ```typescript
+     * // Show only inside a region (defaultOpacity=0, region.opacity=1)
+     * potree.setMaskRegions({
+     *   regions: [
+     *     {
+     *       modelMatrix: new Matrix4(),
+     *       min: new Vector3(-10, -10, 0),
+     *       max: new Vector3(10, 10, 20),
+     *       opacity: 1.0, // Visible inside
+     *     }
+     *   ],
+     *   defaultOpacity: 0.0 // Hidden outside
+     * });
+     *
+     * // Hide inside a region (defaultOpacity=1, region.opacity=0)
+     * potree.setMaskRegions({
+     *   regions: [
+     *     {
+     *       modelMatrix: new Matrix4(),
+     *       min: new Vector3(-5, -5, 0),
+     *       max: new Vector3(5, 5, 10),
+     *       opacity: 0.0, // Hidden inside
+     *     }
+     *   ],
+     *   defaultOpacity: 1.0 // Visible outside
+     * });
+     * ```
+     */
+    setMaskRegions(config, scene) {
+        this.maskConfig = {
+            regions: config.regions || [],
+            defaultOpacity: config.defaultOpacity ?? 1.0,
+        };
+        if (scene) {
+            for (const region of this.maskConfig.regions) {
+                const b2 = new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.modelMatrix.clone().invert());
+                scene.add(addBox3Helper(scene, `mask-region-helper-${Math.random()}`, b2, 0xff0000));
+            }
+        }
+    }
+    /**
+     * Clear all mask regions and restore default visibility
+     */
+    clearMaskRegions() {
+        this.setMaskRegions({
+            regions: [],
+            defaultOpacity: 1.0,
+        });
+    }
+    /**
+     * Get current mask configuration
+     */
+    getMaskConfig() {
+        return { ...this.maskConfig };
+    }
+    /**
+     * Check if a node's bounding box intersects with a visible mask region.
+     */
+    nodeIntersectsMask(pointCloud, node) {
+        if (this.maskConfig.regions.length > 0) {
+            const nodeBBox = node.boundingBox;
+            // For each mask region, check if the node's bounding box intersects with the mask's bounding box
+            for (const mask of this.maskConfig.regions) {
+                // Create a Box3 for the mask region in world space
+                const maskBox = new Box3(mask.min.clone(), mask.max.clone()).applyMatrix4(mask.modelMatrix.clone().invert());
+                const nodeBoxWorld = nodeBBox.clone().applyMatrix4(pointCloud.matrixWorld);
+                // Check if node's bounding box intersects with this mask box
+                if (nodeBoxWorld.intersectsBox(maskBox) && mask.opacity > 0) {
+                    return true; // Node intersects with a visible mask region
+                }
+            }
+        }
+        // If no masks or node doesn't intersect any mask, use default opacity to determine visibility
+        return this.maskConfig.defaultOpacity > 0;
     }
     updatePointClouds(pointClouds, camera, renderer) {
         const result = this.updateVisibility(pointClouds, camera, renderer);
@@ -4261,6 +4386,9 @@ class Potree {
             if (node.level > maxLevel ||
                 !frustums[pointCloudIndex].intersectsBox(node.boundingBox) ||
                 this.shouldClip(pointCloud, node.boundingBox)) {
+                continue;
+            }
+            if (isTreeNode(node) && !this.nodeIntersectsMask(pointCloud, node)) {
                 continue;
             }
             numVisiblePoints += node.numPoints;
