@@ -4035,7 +4035,7 @@ const addBox3Helper = (scene, name, box, color = 0x00ff00) => {
 };
 /**
  * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
- * Will use manually construct the boundary using Line2 since Box3Helper is AABB only.
+ * Will manually construct the boundary using Line2 since Box3Helper is AABB only.
  *
  * @param scene Object3D to add the helper to
  * @param name Name of the helper object
@@ -4246,25 +4246,34 @@ class Potree {
                     return this.maskConfig.defaultOpacity <= 0;
                 }
                 const nodeBBox = node.boundingBox;
+                let hasVisibleRegion = false;
+                let containedInInvisibleRegion = false;
                 // Transform node box to world space once
                 tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
-                // For each mask region, check if the node's bounding box intersects with the mask's bounding box
+                // For each mask region, check how this node relates to the region.
                 for (const mask of this.maskConfig.regions) {
-                    // Check if node is masked out by this region
-                    // If the mask opacity is > 0, a simple intersection check is sufficient.
-                    // If the mask opacity is == 0, we only want to skip if the node is fully contained within the mask.
                     if (mask.opacity > 0) {
-                        if (!tempNodeBox.intersectsBox(mask.bbox)) {
-                            return true;
+                        // Visible region: node contributes if it intersects this region.
+                        if (tempNodeBox.intersectsBox(mask.bbox)) {
+                            hasVisibleRegion = true;
                         }
                     }
                     else {
+                        // Invisible region (opacity <= 0): node should be masked out if it is fully contained.
                         if (mask.bbox.containsBox(tempNodeBox)) {
-                            return true;
+                            containedInInvisibleRegion = true;
                         }
                     }
                 }
-                return false;
+                // Rule 1: If there are any visible regions, the node is visible if it intersects at least one visible region.
+                if (hasVisibleRegion) {
+                    return false; // Node is visible if it intersects any visible region
+                }
+                // Rule 2: Node is masked out if it is fully contained within ANY region with opacity <= 0.
+                if (containedInInvisibleRegion) {
+                    return true;
+                }
+                return this.maskConfig.defaultOpacity <= 0;
             };
         })();
         this.updateVisibilityStructures = (() => {
@@ -4379,16 +4388,23 @@ class Potree {
         // Optionally add debug helpers to visualize mask regions in the scene
         if (scene) {
             for (const region of this.maskConfig.regions) {
-                scene.add(addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00));
-                scene.add(addOrientedBox3Helper(scene, `mask-region-helper-obb-${region.id}`, new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
-                region.matrix.clone(), 0xff0000));
+                addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
+                addOrientedBox3Helper(scene, `mask-region-helper-obb-${region.id}`, new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
+                region.matrix.clone(), 0xff0000);
             }
         }
     }
     /**
      * Clear all mask regions and restore default visibility
+     *
+     * @param scene The Three.js scene to remove mask region helpers from. Must be the same scene used when setting the mask config.
      */
-    clearMaskConfig() {
+    clearMaskConfig(scene) {
+        // clear out mask helpers from the scene
+        this.maskConfig.regions.forEach(region => {
+            clearHelper(scene, `mask-region-helper-aabb-${region.id}`);
+            clearHelper(scene, `mask-region-helper-obb-${region.id}`);
+        });
         this.setMaskConfig({
             regions: [],
             defaultOpacity: 1.0,

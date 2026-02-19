@@ -32,7 +32,7 @@ export declare const clearHelper: (object: Object3D, name: string) => void;
 export declare const addBox3Helper: (scene: Object3D, name: string, box: Box3, color?: number) => Box3Helper;
 /**
  * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
- * Will use manually construct the boundary using Line2 since Box3Helper is AABB only.
+ * Will manually construct the boundary using Line2 since Box3Helper is AABB only.
  *
  * @param scene Object3D to add the helper to
  * @param name Name of the helper object

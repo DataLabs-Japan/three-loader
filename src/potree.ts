@@ -37,7 +37,7 @@ import {
   PickPoint,
 } from './types';
 import { BinaryHeap } from './utils/binary-heap';
-import { addBox3Helper, addOrientedBox3Helper, Box3Helper } from './utils/box3-helper';
+import { addBox3Helper, addOrientedBox3Helper, Box3Helper, clearHelper } from './utils/box3-helper';
 import { LRU } from './utils/lru';
 
 export class QueueItem {
@@ -151,22 +151,13 @@ export class Potree implements IPotree {
     // Optionally add debug helpers to visualize mask regions in the scene
     if (scene) {
       for (const region of this.maskConfig.regions) {
-        scene.add(
-          addBox3Helper(
-            scene,
-            `mask-region-helper-aabb-${region.id}`,
-            region.bbox.clone(),
-            0x00ff00,
-          ),
-        );
-        scene.add(
-          addOrientedBox3Helper(
-            scene,
-            `mask-region-helper-obb-${region.id}`,
-            new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
-            region.matrix.clone(),
-            0xff0000,
-          ),
+        addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
+        addOrientedBox3Helper(
+          scene,
+          `mask-region-helper-obb-${region.id}`,
+          new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
+          region.matrix.clone(),
+          0xff0000,
         );
       }
     }
@@ -174,8 +165,15 @@ export class Potree implements IPotree {
 
   /**
    * Clear all mask regions and restore default visibility
+   *
+   * @param scene The Three.js scene to remove mask region helpers from. Must be the same scene used when setting the mask config.
    */
-  clearMaskConfig(): void {
+  clearMaskConfig(scene: Object3D): void {
+    // clear out mask helpers from the scene
+    this.maskConfig.regions.forEach(region => {
+      clearHelper(scene, `mask-region-helper-aabb-${region.id}`);
+      clearHelper(scene, `mask-region-helper-obb-${region.id}`);
+    });
     this.setMaskConfig({
       regions: [],
       defaultOpacity: 1.0,
@@ -203,21 +201,18 @@ export class Potree implements IPotree {
       }
 
       const nodeBBox = node.boundingBox;
+      let hasVisibleRegion = false;
+      let containedInInvisibleRegion = false;
 
       // Transform node box to world space once
       tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
-
-      // Track whether the node intersects at least one visible region (> 0 opacity)
-      // and whether it is fully contained within any invisible region (<= 0 opacity).
-      let hasVisibleIntersection = false;
-      let containedInInvisibleRegion = false;
 
       // For each mask region, check how this node relates to the region.
       for (const mask of this.maskConfig.regions) {
         if (mask.opacity > 0) {
           // Visible region: node contributes if it intersects this region.
           if (tempNodeBox.intersectsBox(mask.bbox)) {
-            hasVisibleIntersection = true;
+            hasVisibleRegion = true;
           }
         } else {
           // Invisible region (opacity <= 0): node should be masked out if it is fully contained.
@@ -227,19 +222,17 @@ export class Potree implements IPotree {
         }
       }
 
+      // Rule 1: If there are any visible regions, the node is visible if it intersects at least one visible region.
+      if (hasVisibleRegion) {
+        return false; // Node is visible if it intersects any visible region
+      }
+
       // Rule 2: Node is masked out if it is fully contained within ANY region with opacity <= 0.
       if (containedInInvisibleRegion) {
         return true;
       }
 
-      // Rule 1: Node is masked out if it doesn't intersect ANY region with opacity > 0
-      // and the default opacity is <= 0.
-      if (!hasVisibleIntersection && this.maskConfig.defaultOpacity <= 0) {
-        return true;
-      }
-
-      // Otherwise, the node is not masked out.
-      return false;
+      return this.maskConfig.defaultOpacity <= 0;
     };
   })();
 

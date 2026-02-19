@@ -80,8 +80,10 @@ export declare class Potree implements IPotree {
     setMaskConfig(config: MaskConfig, scene?: Object3D): void;
     /**
      * Clear all mask regions and restore default visibility
+     *
+     * @param scene The Three.js scene to remove mask region helpers from. Must be the same scene used when setting the mask config.
      */
-    clearMaskConfig(): void;
+    clearMaskConfig(scene: Object3D): void;
     /**
      * Get current mask configuration
      */
