@@ -36,7 +36,7 @@ import {
   PickPoint,
 } from './types';
 import { BinaryHeap } from './utils/binary-heap';
-import { addBox3Helper, Box3Helper } from './utils/box3-helper';
+import { addBox3Helper, addOrientedBox3Helper, Box3Helper } from './utils/box3-helper';
 import { LRU } from './utils/lru';
 
 export class QueueItem {
@@ -144,11 +144,19 @@ export class Potree implements IPotree {
     // Optionally add debug helpers to visualize mask regions in the scene
     if (scene) {
       for (const region of this.maskConfig.regions) {
-        const b2 = new Box3(region.min.clone(), region.max.clone()).applyMatrix4(
-          region.modelMatrix.clone().invert(),
-        );
+        const obb = new Box3(region.min.clone(), region.max.clone());
+        const aabb = obb.clone().applyMatrix4(region.modelMatrix.clone().invert());
 
-        scene.add(addBox3Helper(scene, `mask-region-helper-${region.id}`, b2, 0xff0000));
+        scene.add(addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, aabb, 0x00ff00));
+        scene.add(
+          addOrientedBox3Helper(
+            scene,
+            `mask-region-helper-obb-${region.id}`,
+            obb,
+            region.modelMatrix.clone().invert(),
+            0xff0000,
+          ),
+        );
       }
     }
   }

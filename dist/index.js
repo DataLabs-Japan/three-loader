@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineBasicMaterial, LineSegments, Matrix4, Frustum } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -4033,6 +4033,45 @@ const addBox3Helper = (scene, name, box, color = 0x00ff00) => {
     scene.add(boxHelper);
     return boxHelper;
 };
+/**
+ * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
+ * Will use manually construct the boundary using Line2 since Box3Helper is AABB only.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param modelMatrix Matrix4 representing the orientation and position of the box
+ * @param color Color of the helper lines
+ */
+const addOrientedBox3Helper = (scene, name, box, modelMatrix, color = 0x00ff00) => {
+    clearHelper(scene, name);
+    const corners = [
+        new Vector3(box.min.x, box.min.y, box.min.z),
+        new Vector3(box.max.x, box.min.y, box.min.z),
+        new Vector3(box.max.x, box.min.y, box.max.z),
+        new Vector3(box.min.x, box.min.y, box.max.z),
+        new Vector3(box.min.x, box.max.y, box.min.z),
+        new Vector3(box.max.x, box.max.y, box.min.z),
+        new Vector3(box.max.x, box.max.y, box.max.z),
+        new Vector3(box.min.x, box.max.y, box.max.z),
+    ].map(corner => corner.applyMatrix4(modelMatrix));
+    // prettier-ignore
+    const indices = new Uint16Array([
+        0, 1, 1, 2, 2, 3, 3, 0,
+        4, 5, 5, 6, 6, 7, 7, 4,
+        0, 4, 1, 5, 2, 6, 3, 7 // Vertical edges
+    ]);
+    const positions = new Float32Array(corners.flatMap(c => [c.x, c.y, c.z]));
+    const geometry = new BufferGeometry();
+    geometry.setIndex(new BufferAttribute(indices, 1));
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    const material = new LineBasicMaterial({ color: color });
+    const lineSegments = new LineSegments(geometry, material);
+    lineSegments.name = name;
+    lineSegments.userData.type = 'debug';
+    scene.add(lineSegments);
+    return lineSegments;
+};
 
 class LRUItem {
     constructor(node) {
@@ -4301,8 +4340,10 @@ class Potree {
         // Optionally add debug helpers to visualize mask regions in the scene
         if (scene) {
             for (const region of this.maskConfig.regions) {
-                const b2 = new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.modelMatrix.clone().invert());
-                scene.add(addBox3Helper(scene, `mask-region-helper-${region.id}`, b2, 0xff0000));
+                const obb = new Box3(region.min.clone(), region.max.clone());
+                const aabb = obb.clone().applyMatrix4(region.modelMatrix.clone().invert());
+                scene.add(addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, aabb, 0x00ff00));
+                scene.add(addOrientedBox3Helper(scene, `mask-region-helper-obb-${region.id}`, obb, region.modelMatrix.clone().invert(), 0xff0000));
             }
         }
     }

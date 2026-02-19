@@ -1,4 +1,4 @@
-import { Box3, Color, LineSegments, Object3D } from 'three';
+import { Box3, Color, LineSegments, Matrix4, Object3D } from 'three';
 /**
  *
  * code adapted from three.js BoxHelper.js
@@ -30,3 +30,15 @@ export declare const clearHelper: (object: Object3D, name: string) => void;
  * @param color Color of the helper lines
  */
 export declare const addBox3Helper: (scene: Object3D, name: string, box: Box3, color?: number) => Box3Helper;
+/**
+ * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
+ * Will use manually construct the boundary using Line2 since Box3Helper is AABB only.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param modelMatrix Matrix4 representing the orientation and position of the box
+ * @param color Color of the helper lines
+ */
+export declare const addOrientedBox3Helper: (scene: Object3D, name: string, box: Box3, modelMatrix: Matrix4, color?: number) => LineSegments;
+export default Box3Helper;

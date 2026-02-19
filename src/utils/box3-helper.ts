@@ -5,7 +5,9 @@ import {
   Color,
   LineBasicMaterial,
   LineSegments,
+  Matrix4,
   Object3D,
+  Vector3,
 } from 'three';
 
 /**
@@ -84,3 +86,56 @@ export const addBox3Helper = (
   scene.add(boxHelper);
   return boxHelper;
 };
+
+/**
+ * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
+ * Will use manually construct the boundary using Line2 since Box3Helper is AABB only.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param modelMatrix Matrix4 representing the orientation and position of the box
+ * @param color Color of the helper lines
+ */
+export const addOrientedBox3Helper = (
+  scene: Object3D,
+  name: string,
+  box: Box3,
+  modelMatrix: Matrix4,
+  color = 0x00ff00,
+): LineSegments => {
+  clearHelper(scene, name);
+
+  const corners = [
+    new Vector3(box.min.x, box.min.y, box.min.z),
+    new Vector3(box.max.x, box.min.y, box.min.z),
+    new Vector3(box.max.x, box.min.y, box.max.z),
+    new Vector3(box.min.x, box.min.y, box.max.z),
+    new Vector3(box.min.x, box.max.y, box.min.z),
+    new Vector3(box.max.x, box.max.y, box.min.z),
+    new Vector3(box.max.x, box.max.y, box.max.z),
+    new Vector3(box.min.x, box.max.y, box.max.z),
+  ].map(corner => corner.applyMatrix4(modelMatrix));
+
+  // prettier-ignore
+  const indices = new Uint16Array([
+    0, 1, 1, 2, 2, 3, 3, 0,  // Bottom face
+    4, 5, 5, 6, 6, 7, 7, 4,  // Top face
+    0, 4, 1, 5, 2, 6, 3, 7   // Vertical edges
+  ]);
+
+  const positions = new Float32Array(corners.flatMap(c => [c.x, c.y, c.z]));
+  const geometry = new BufferGeometry();
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+
+  const material = new LineBasicMaterial({ color: color });
+  const lineSegments = new LineSegments(geometry, material);
+  lineSegments.name = name;
+  lineSegments.userData.type = 'debug';
+
+  scene.add(lineSegments);
+  return lineSegments;
+};
+
+export default Box3Helper;
