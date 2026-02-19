@@ -27,6 +27,7 @@ import { PointCloudOctreeNode } from './point-cloud-octree-node';
 import { PickParams, PointCloudOctreePicker } from './point-cloud-octree-picker';
 import { isGeometryNode, isTreeNode } from './type-predicates';
 import {
+  InternalMaskConfig,
   IPointCloudGeometryNode,
   IPointCloudTreeNode,
   IPotree,
@@ -71,7 +72,7 @@ export class Potree implements IPotree {
   lru = new LRU(this._pointBudget);
 
   private readonly loadGeometry: GeometryLoader;
-  private maskConfig: MaskConfig = {
+  private maskConfig: InternalMaskConfig = {
     regions: [],
     defaultOpacity: 1.0,
   };
@@ -112,48 +113,58 @@ export class Potree implements IPotree {
    * potree.setMaskConfig({
    *   regions: [
    *     {
-   *       modelMatrix: new Matrix4(),
+   *       id: 'region-1',
+   *       matrix: new Matrix4(),
    *       min: new Vector3(-10, -10, 0),
    *       max: new Vector3(10, 10, 20),
    *       opacity: 1.0, // Visible inside
    *     }
    *   ],
-   *   defaultOpacity: 0.0 // Hidden outside
+   *   defaultOpacity: 0.0 // Outside is hidden
    * });
    *
    * // Hide inside a region (defaultOpacity=1, region.opacity=0)
    * potree.setMaskConfig({
    *   regions: [
    *     {
-   *       modelMatrix: new Matrix4(),
+   *       id: 'region-2',
+   *       matrix: new Matrix4(),
    *       min: new Vector3(-5, -5, 0),
    *       max: new Vector3(5, 5, 10),
    *       opacity: 0.0, // Hidden inside
    *     }
    *   ],
-   *   defaultOpacity: 1.0 // Visible outside
+   *   defaultOpacity: 1.0 // Outside is visible
    * });
    * ```
    */
   setMaskConfig(config: MaskConfig, scene?: Object3D): void {
     this.maskConfig = {
-      regions: config.regions || [],
+      regions: (config.regions || []).map(region => ({
+        ...region,
+        bbox: new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.matrix),
+        inverseMatrix: region.inverseMatrix ?? region.matrix.clone().invert(),
+      })),
       defaultOpacity: config.defaultOpacity ?? 1.0,
     };
 
     // Optionally add debug helpers to visualize mask regions in the scene
     if (scene) {
       for (const region of this.maskConfig.regions) {
-        const obb = new Box3(region.min.clone(), region.max.clone());
-        const aabb = obb.clone().applyMatrix4(region.modelMatrix.clone().invert());
-
-        scene.add(addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, aabb, 0x00ff00));
+        scene.add(
+          addBox3Helper(
+            scene,
+            `mask-region-helper-aabb-${region.id}`,
+            region.bbox.clone(),
+            0x00ff00,
+          ),
+        );
         scene.add(
           addOrientedBox3Helper(
             scene,
             `mask-region-helper-obb-${region.id}`,
-            obb,
-            region.modelMatrix.clone().invert(),
+            new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
+            region.matrix.clone(),
             0xff0000,
           ),
         );
@@ -182,32 +193,39 @@ export class Potree implements IPotree {
    * Check if a node is masked out based on the current mask configuration.
    * A node is considered masked out if it should be hidden according to the mask regions and their opacities.
    */
-  private isNodeMaskedOut(pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean {
-    if (this.maskConfig.regions.length > 0) {
+  private isNodeMaskedOut = (() => {
+    // Reusable temporary objects to avoid allocations in hot path
+    const tempNodeBox = new Box3();
+
+    return (pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean => {
+      if (this.maskConfig.regions.length === 0) {
+        return this.maskConfig.defaultOpacity <= 0;
+      }
+
       const nodeBBox = node.boundingBox;
+
+      // Transform node box to world space once
+      tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
 
       // For each mask region, check if the node's bounding box intersects with the mask's bounding box
       for (const mask of this.maskConfig.regions) {
-        // Create a Box3 for the mask region in world space
-        const maskBox = new Box3(mask.min.clone(), mask.max.clone()).applyMatrix4(
-          mask.modelMatrix.clone().invert(),
-        );
-        const nodeBoxWorld = nodeBBox.clone().applyMatrix4(pointCloud.matrixWorld);
-
-        // -- Check if node is masked out by this region
+        // Check if node is masked out by this region
         // If the mask opacity is > 0, a simple intersection check is sufficient.
         // If the mask opacity is == 0, we only want to skip if the node is fully contained within the mask.
         if (mask.opacity > 0) {
-          return !nodeBoxWorld.intersectsBox(maskBox);
+          if (!tempNodeBox.intersectsBox(mask.bbox)) {
+            return true;
+          }
         } else {
-          return maskBox.containsBox(nodeBoxWorld);
+          if (mask.bbox.containsBox(tempNodeBox)) {
+            return true;
+          }
         }
       }
-    }
 
-    // If no masks or node doesn't intersect any mask, use default opacity to determine visibility
-    return this.maskConfig.defaultOpacity > 0;
-  }
+      return false;
+    };
+  })();
 
   /**
    * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.

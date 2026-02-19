@@ -52,26 +52,28 @@ export declare class Potree implements IPotree {
      * potree.setMaskConfig({
      *   regions: [
      *     {
-     *       modelMatrix: new Matrix4(),
+     *       id: 'region-1',
+     *       matrix: new Matrix4(),
      *       min: new Vector3(-10, -10, 0),
      *       max: new Vector3(10, 10, 20),
      *       opacity: 1.0, // Visible inside
      *     }
      *   ],
-     *   defaultOpacity: 0.0 // Hidden outside
+     *   defaultOpacity: 0.0 // Outside is hidden
      * });
      *
      * // Hide inside a region (defaultOpacity=1, region.opacity=0)
      * potree.setMaskConfig({
      *   regions: [
      *     {
-     *       modelMatrix: new Matrix4(),
+     *       id: 'region-2',
+     *       matrix: new Matrix4(),
      *       min: new Vector3(-5, -5, 0),
      *       max: new Vector3(5, 5, 10),
      *       opacity: 0.0, // Hidden inside
      *     }
      *   ],
-     *   defaultOpacity: 1.0 // Visible outside
+     *   defaultOpacity: 1.0 // Outside is visible
      * });
      * ```
      */
