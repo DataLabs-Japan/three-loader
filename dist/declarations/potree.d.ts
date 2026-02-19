@@ -85,9 +85,10 @@ export declare class Potree implements IPotree {
      */
     getMaskConfig(): MaskConfig;
     /**
-     * Check if a node's bounding box intersects with a visible mask region.
+     * Check if a node is masked out based on the current mask configuration.
+     * A node is considered masked out if it should be hidden according to the mask regions and their opacities.
      */
-    private nodeIntersectsMask;
+    private isNodeMaskedOut;
     /**
      * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.
      * This method should be called on each frame before rendering to ensure that the correct nodes are visible.

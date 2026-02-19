@@ -171,9 +171,10 @@ export class Potree implements IPotree {
   }
 
   /**
-   * Check if a node's bounding box intersects with a visible mask region.
+   * Check if a node is masked out based on the current mask configuration.
+   * A node is considered masked out if it should be hidden according to the mask regions and their opacities.
    */
-  private nodeIntersectsMask(pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean {
+  private isNodeMaskedOut(pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean {
     if (this.maskConfig.regions.length > 0) {
       const nodeBBox = node.boundingBox;
 
@@ -185,9 +186,13 @@ export class Potree implements IPotree {
         );
         const nodeBoxWorld = nodeBBox.clone().applyMatrix4(pointCloud.matrixWorld);
 
-        // Check if node's bounding box intersects with this mask box
-        if (nodeBoxWorld.intersectsBox(maskBox) && mask.opacity > 0) {
-          return true; // Node intersects with a visible mask region
+        // -- Check if node is masked out by this region
+        // If the mask opacity is > 0, a simple intersection check is sufficient.
+        // If the mask opacity is == 0, we only want to skip if the node is fully contained within the mask.
+        if (mask.opacity > 0) {
+          return !nodeBoxWorld.intersectsBox(maskBox);
+        } else {
+          return maskBox.containsBox(nodeBoxWorld);
         }
       }
     }
@@ -301,7 +306,7 @@ export class Potree implements IPotree {
         continue;
       }
 
-      if (isTreeNode(node) && !this.nodeIntersectsMask(pointCloud, node)) {
+      if (isTreeNode(node) && this.isNodeMaskedOut(pointCloud, node)) {
         continue;
       }
 

@@ -4322,9 +4322,10 @@ class Potree {
         return { ...this.maskConfig };
     }
     /**
-     * Check if a node's bounding box intersects with a visible mask region.
+     * Check if a node is masked out based on the current mask configuration.
+     * A node is considered masked out if it should be hidden according to the mask regions and their opacities.
      */
-    nodeIntersectsMask(pointCloud, node) {
+    isNodeMaskedOut(pointCloud, node) {
         if (this.maskConfig.regions.length > 0) {
             const nodeBBox = node.boundingBox;
             // For each mask region, check if the node's bounding box intersects with the mask's bounding box
@@ -4332,9 +4333,14 @@ class Potree {
                 // Create a Box3 for the mask region in world space
                 const maskBox = new Box3(mask.min.clone(), mask.max.clone()).applyMatrix4(mask.modelMatrix.clone().invert());
                 const nodeBoxWorld = nodeBBox.clone().applyMatrix4(pointCloud.matrixWorld);
-                // Check if node's bounding box intersects with this mask box
-                if (nodeBoxWorld.intersectsBox(maskBox) && mask.opacity > 0) {
-                    return true; // Node intersects with a visible mask region
+                // -- Check if node is masked out by this region
+                // If the mask opacity is > 0, a simple intersection check is sufficient.
+                // If the mask opacity is == 0, we only want to skip if the node is fully contained within the mask.
+                if (mask.opacity > 0) {
+                    return !nodeBoxWorld.intersectsBox(maskBox);
+                }
+                else {
+                    return maskBox.containsBox(nodeBoxWorld);
                 }
             }
         }
@@ -4408,7 +4414,7 @@ class Potree {
                 this.shouldClip(pointCloud, node.boundingBox)) {
                 continue;
             }
-            if (isTreeNode(node) && !this.nodeIntersectsMask(pointCloud, node)) {
+            if (isTreeNode(node) && this.isNodeMaskedOut(pointCloud, node)) {
                 continue;
             }
             numVisiblePoints += node.numPoints;
