@@ -4298,10 +4298,11 @@ class Potree {
             regions: config.regions || [],
             defaultOpacity: config.defaultOpacity ?? 1.0,
         };
+        // Optionally add debug helpers to visualize mask regions in the scene
         if (scene) {
             for (const region of this.maskConfig.regions) {
                 const b2 = new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.modelMatrix.clone().invert());
-                scene.add(addBox3Helper(scene, `mask-region-helper-${Math.random()}`, b2, 0xff0000));
+                scene.add(addBox3Helper(scene, `mask-region-helper-${region.id}`, b2, 0xff0000));
             }
         }
     }

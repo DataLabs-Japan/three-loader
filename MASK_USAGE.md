@@ -34,9 +34,25 @@ Everything is controlled by opacity values (0 = invisible, 1 = fully visible):
 
 Each mask region defines:
 
-- **modelMatrix**: Transformation matrix for the mask bounding box
+- **modelMatrix**: **World-to-local** transformation matrix (inverted model matrix). This transforms world coordinates to the mask's local coordinate system.
 - **min/max**: Bounding box bounds in local space (Vector3)
 - **opacity**: Opacity for points INSIDE this region (0 = invisible, 1 = fully visible)
+
+**Important**: The `modelMatrix` must be the **inverse** of the standard model matrix (local-to-world). This allows the shader to transform world points into the mask's local space for bounds checking.
+
+```typescript
+// Example: Creating a world-to-local matrix
+const modelMatrix = new Matrix4()
+  .compose(
+    new Vector3(x, y, z),        // Position in world space
+    new Quaternion(...),          // Rotation
+    new Vector3(1, 1, 1)          // Scale
+  )
+  .invert();  // ← Convert to world-to-local
+
+// For identity (world space aligned)
+const identityMatrix = new Matrix4(); // Already world-to-local (identity)
+```
 
 ### MaskConfig
 
@@ -58,10 +74,10 @@ import { Matrix4, Vector3 } from 'three';
 const potree = new Potree();
 
 // No masking effect - everything is visible
-potree.setMaskRegions({
+potree.setMaskConfig({
   regions: [
     {
-      modelMatrix: new Matrix4(),
+      modelMatrix: new Matrix4(), // Identity matrix (world space aligned)
       min: new Vector3(-10, -10, 0),
       max: new Vector3(10, 10, 20),
       opacity: 1.0, // Points INSIDE are fully visible
@@ -80,7 +96,7 @@ potree.updatePointClouds(pointClouds, camera, renderer);
 
 ```typescript
 // Show only points inside the box
-potree.setMaskRegions({
+potree.setMaskConfig({
   regions: [
     {
       modelMatrix: new Matrix4(),
@@ -99,7 +115,7 @@ potree.setMaskRegions({
 
 ```typescript
 // Hide points inside a region (e.g., remove a building)
-potree.setMaskRegions({
+potree.setMaskConfig({
   regions: [
     {
       modelMatrix: new Matrix4(),
@@ -118,7 +134,7 @@ When masks overlap, points in the overlapping region get the **maximum opacity**
 
 ```typescript
 // Two overlapping regions with different opacities
-potree.setMaskRegions({
+potree.setMaskConfig({
   regions: [
     {
       // Region A - dim visibility
@@ -129,7 +145,10 @@ potree.setMaskRegions({
     },
     {
       // Region B - overlaps with A, full visibility
-      modelMatrix: new Matrix4().makeTranslation(5, 5, 5),
+      // Create world-to-local matrix for a translated region
+      modelMatrix: new Matrix4()
+        .makeTranslation(5, 5, 5) // Position in world space
+        .invert(), // Convert to world-to-local
       min: new Vector3(-8, -8, 0),
       max: new Vector3(8, 8, 15),
       opacity: 1.0, // Points INSIDE region B have 1.0 opacity
@@ -149,10 +168,10 @@ potree.setMaskRegions({
 
 ```typescript
 // Remove all masks and restore normal visibility
-potree.clearMaskRegions();
+potree.clearMaskConfig();
 
 // Or explicitly set to no masks
-potree.setMaskRegions({
+potree.setMaskConfig({
   regions: [],
   defaultOpacity: 1.0,
 });
@@ -167,6 +186,43 @@ console.log(`Default opacity: ${currentMasks.defaultOpacity}`);
 ```
 
 ## How It Works
+
+### Matrix Transformation (Important!)
+
+The `modelMatrix` in each mask region **must be a world-to-local transformation** (inverse of the standard model matrix).
+
+**Why?** The shader needs to:
+
+1. Take a point in **world coordinates**
+2. Transform it to the mask's **local space**
+3. Check if it's inside the local bounding box (min/max)
+
+**How to create it:**
+
+```typescript
+// Standard approach: compose then invert
+const modelMatrix = new Matrix4()
+  .compose(
+    new Vector3(x, y, z),           // Position in world
+    new Quaternion().setFromEuler(...), // Rotation
+    new Vector3(1, 1, 1)            // Scale (typically 1,1,1)
+  )
+  .invert();  // ← CRITICAL: Converts local→world to world→local
+
+// For world-aligned box (no rotation/translation)
+const identityMatrix = new Matrix4(); // Already world→local
+
+// For translated box
+const translatedMatrix = new Matrix4()
+  .makeTranslation(x, y, z)
+  .invert();
+
+// For rotated and translated box
+const transformedMatrix = new Matrix4()
+  .makeRotationFromQuaternion(quaternion)
+  .setPosition(new Vector3(x, y, z))
+  .invert();
+```
 
 ### Node Visibility Determination (CPU-level culling)
 
@@ -188,9 +244,12 @@ For each octree node:
 
 For each individual point (more precise than node-level):
 
-1. Transform point to each mask's local space
-2. Apply the opacity calculation logic
-3. Render with the calculated opacity
+1. **Transform to local space**: Point in world coordinates is multiplied by `modelMatrix` (world→local)
+2. **Bounds check**: Check if transformed point is inside the mask's local bounding box (min/max)
+3. **Calculate opacity**:
+   - If inside: `opacity = max(currentOpacity, mask.opacity)`
+   - If outside: keep current opacity
+4. **Render**: Use final opacity value
 
 This two-level approach:
 

@@ -6,7 +6,9 @@ import { PointCloudOctreeGeometry } from './point-cloud-octree-geometry';
 import { LRU } from './utils/lru';
 
 export interface MaskRegion {
-  /** Transformation matrix for the mask region */
+  /** Unique identifier for the mask region */
+  id: string;
+  /** Transformation matrix from world space to local space for the mask region */
   modelMatrix: Matrix4;
   /** Minimum bounds in local space */
   min: Vector3;
