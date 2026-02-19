@@ -207,22 +207,38 @@ export class Potree implements IPotree {
       // Transform node box to world space once
       tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
 
-      // For each mask region, check if the node's bounding box intersects with the mask's bounding box
+      // Track whether the node intersects at least one visible region (> 0 opacity)
+      // and whether it is fully contained within any invisible region (<= 0 opacity).
+      let hasVisibleIntersection = false;
+      let containedInInvisibleRegion = false;
+
+      // For each mask region, check how this node relates to the region.
       for (const mask of this.maskConfig.regions) {
-        // Check if node is masked out by this region
-        // If the mask opacity is > 0, a simple intersection check is sufficient.
-        // If the mask opacity is == 0, we only want to skip if the node is fully contained within the mask.
         if (mask.opacity > 0) {
-          if (!tempNodeBox.intersectsBox(mask.bbox)) {
-            return true;
+          // Visible region: node contributes if it intersects this region.
+          if (tempNodeBox.intersectsBox(mask.bbox)) {
+            hasVisibleIntersection = true;
           }
         } else {
+          // Invisible region (opacity <= 0): node should be masked out if it is fully contained.
           if (mask.bbox.containsBox(tempNodeBox)) {
-            return true;
+            containedInInvisibleRegion = true;
           }
         }
       }
 
+      // Rule 2: Node is masked out if it is fully contained within ANY region with opacity <= 0.
+      if (containedInInvisibleRegion) {
+        return true;
+      }
+
+      // Rule 1: Node is masked out if it doesn't intersect ANY region with opacity > 0
+      // and the default opacity is <= 0.
+      if (!hasVisibleIntersection && this.maskConfig.defaultOpacity <= 0) {
+        return true;
+      }
+
+      // Otherwise, the node is not masked out.
       return false;
     };
   })();
