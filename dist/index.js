@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineBasicMaterial, LineSegments, Matrix4, Frustum } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -4001,6 +4001,77 @@ class Box3Helper extends LineSegments {
         super(geometry, material);
     }
 }
+/**
+ * Clear a helper plane mesh from the object.
+ * Provide Scene if object was added directly to the scene.
+ *
+ * Removes all children from the object with the given name.
+ *
+ * @param object The Three.js Parent object to remove the helper from.
+ * @param name The name of the helper mesh to remove.
+ */
+const clearHelper = (object, name) => {
+    object.children
+        .filter(child => child.name === name)
+        .forEach(child => {
+        object.remove(child);
+    });
+};
+/**
+ * Add a Box3Helper to visualize a Box3 in the scene.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param color Color of the helper lines
+ */
+const addBox3Helper = (scene, name, box, color = 0x00ff00) => {
+    clearHelper(scene, name);
+    const boxHelper = new Box3Helper(box, new Color(color));
+    boxHelper.name = name;
+    boxHelper.userData.type = 'debug';
+    scene.add(boxHelper);
+    return boxHelper;
+};
+/**
+ * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
+ * Will manually construct the boundary using Line2 since Box3Helper is AABB only.
+ *
+ * @param scene Object3D to add the helper to
+ * @param name Name of the helper object
+ * @param box Box3 to visualize
+ * @param modelMatrix Matrix4 representing the orientation and position of the box
+ * @param color Color of the helper lines
+ */
+const addOrientedBox3Helper = (scene, name, box, modelMatrix, color = 0x00ff00) => {
+    clearHelper(scene, name);
+    const corners = [
+        new Vector3(box.min.x, box.min.y, box.min.z),
+        new Vector3(box.max.x, box.min.y, box.min.z),
+        new Vector3(box.max.x, box.min.y, box.max.z),
+        new Vector3(box.min.x, box.min.y, box.max.z),
+        new Vector3(box.min.x, box.max.y, box.min.z),
+        new Vector3(box.max.x, box.max.y, box.min.z),
+        new Vector3(box.max.x, box.max.y, box.max.z),
+        new Vector3(box.min.x, box.max.y, box.max.z),
+    ].map(corner => corner.applyMatrix4(modelMatrix));
+    // prettier-ignore
+    const indices = new Uint16Array([
+        0, 1, 1, 2, 2, 3, 3, 0,
+        4, 5, 5, 6, 6, 7, 7, 4,
+        0, 4, 1, 5, 2, 6, 3, 7 // Vertical edges
+    ]);
+    const positions = new Float32Array(corners.flatMap(c => [c.x, c.y, c.z]));
+    const geometry = new BufferGeometry();
+    geometry.setIndex(new BufferAttribute(indices, 1));
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    const material = new LineBasicMaterial({ color: color });
+    const lineSegments = new LineSegments(geometry, material);
+    lineSegments.name = name;
+    lineSegments.userData.type = 'debug';
+    scene.add(lineSegments);
+    return lineSegments;
+};
 
 class LRUItem {
     constructor(node) {
@@ -4159,6 +4230,52 @@ class Potree {
         this.maxNumNodesLoading = MAX_NUM_NODES_LOADING;
         this.features = FEATURES;
         this.lru = new LRU(this._pointBudget);
+        this.maskConfig = {
+            regions: [],
+            defaultOpacity: 1.0,
+        };
+        /**
+         * Check if a node is masked out based on the current mask configuration.
+         * A node is considered masked out if it should be hidden according to the mask regions and their opacities.
+         */
+        this.isNodeMaskedOut = (() => {
+            // Reusable temporary objects to avoid allocations in hot path
+            const tempNodeBox = new Box3();
+            return (pointCloud, node) => {
+                if (this.maskConfig.regions.length === 0) {
+                    return this.maskConfig.defaultOpacity <= 0;
+                }
+                const nodeBBox = node.boundingBox;
+                let hasVisibleRegion = false;
+                let containedInInvisibleRegion = false;
+                // Transform node box to world space once
+                tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
+                // For each mask region, check how this node relates to the region.
+                for (const mask of this.maskConfig.regions) {
+                    if (mask.opacity > 0) {
+                        // Visible region: node contributes if it intersects this region.
+                        if (tempNodeBox.intersectsBox(mask.bbox)) {
+                            hasVisibleRegion = true;
+                        }
+                    }
+                    else {
+                        // Invisible region (opacity <= 0): node should be masked out if it is fully contained.
+                        if (mask.bbox.containsBox(tempNodeBox)) {
+                            containedInInvisibleRegion = true;
+                        }
+                    }
+                }
+                // Rule 1: If there are any visible regions, the node is visible if it intersects at least one visible region.
+                if (hasVisibleRegion) {
+                    return false; // Node is visible if it intersects any visible region
+                }
+                // Rule 2: Node is masked out if it is fully contained within ANY region with opacity <= 0.
+                if (containedInInvisibleRegion) {
+                    return true;
+                }
+                return this.maskConfig.defaultOpacity <= 0;
+            };
+        })();
         this.updateVisibilityStructures = (() => {
             const frustumMatrix = new Matrix4();
             const inverseWorldMatrix = new Matrix4();
@@ -4166,7 +4283,7 @@ class Potree {
             return (pointClouds, camera) => {
                 const frustums = [];
                 const cameraPositions = [];
-                const priorityQueue = new BinaryHeap((x) => 1 / x.weight);
+                const priorityQueue = new BinaryHeap(x => 1 / x.weight);
                 for (let i = 0; i < pointClouds.length; i++) {
                     const pointCloud = pointClouds[i];
                     if (!pointCloud.initialized()) {
@@ -4179,11 +4296,18 @@ class Potree {
                     // Furstum in object space.
                     const inverseViewMatrix = camera.matrixWorldInverse;
                     const worldMatrix = pointCloud.matrixWorld;
-                    frustumMatrix.identity().multiply(camera.projectionMatrix).multiply(inverseViewMatrix).multiply(worldMatrix);
+                    frustumMatrix
+                        .identity()
+                        .multiply(camera.projectionMatrix)
+                        .multiply(inverseViewMatrix)
+                        .multiply(worldMatrix);
                     frustums.push(new Frustum().setFromProjectionMatrix(frustumMatrix));
                     // Camera position in object space
                     inverseWorldMatrix.copy(worldMatrix).invert();
-                    cameraMatrix.identity().multiply(inverseWorldMatrix).multiply(camera.matrixWorld);
+                    cameraMatrix
+                        .identity()
+                        .multiply(inverseWorldMatrix)
+                        .multiply(camera.matrixWorld);
                     cameraPositions.push(new Vector3().setFromMatrixPosition(cameraMatrix));
                     if (pointCloud.visible && pointCloud.root !== null) {
                         const weight = Number.MAX_VALUE;
@@ -4202,9 +4326,105 @@ class Potree {
         })();
         this.loadGeometry = GEOMETRY_LOADERS[version];
     }
+    /**
+     * Load a point cloud from a given URL. The URL is the location of the potree metadata (e.g. `metadata.json`).
+     * The `getUrl` function is used to resolve the URLs of the geometry files, which allows for
+     * custom logic such as signing URLs or fetching from different sources.
+     *
+     * @param url The URL of the point cloud metadata file.
+     * @param getUrl A function to resolve the URLs of the geometry files.
+     * @param xhrRequest Optional function to perform the XHR request. Defaults to `fetch`.
+     * @returns A promise that resolves to the loaded `PointCloudOctree`.
+     */
     loadPointCloud(url, getUrl, xhrRequest = (input, init) => fetch(input, init)) {
-        return this.loadGeometry(url, getUrl, xhrRequest).then((geometry) => new PointCloudOctree(this, geometry));
+        return this.loadGeometry(url, getUrl, xhrRequest).then(geometry => new PointCloudOctree(this, geometry));
     }
+    /**
+     * Set mask regions for visibility filtering and opacity control.
+     *
+     * @param config Mask configuration with regions and default opacity
+     * @param scene Optional Three.js scene to add debug helpers for mask regions. If not provided, no helpers will be added.
+     *
+     * @example
+     * ```typescript
+     * // Show only inside a region (defaultOpacity=0, region.opacity=1)
+     * potree.setMaskConfig({
+     *   regions: [
+     *     {
+     *       id: 'region-1',
+     *       matrix: new Matrix4(),
+     *       min: new Vector3(-10, -10, 0),
+     *       max: new Vector3(10, 10, 20),
+     *       opacity: 1.0, // Visible inside
+     *     }
+     *   ],
+     *   defaultOpacity: 0.0 // Outside is hidden
+     * });
+     *
+     * // Hide inside a region (defaultOpacity=1, region.opacity=0)
+     * potree.setMaskConfig({
+     *   regions: [
+     *     {
+     *       id: 'region-2',
+     *       matrix: new Matrix4(),
+     *       min: new Vector3(-5, -5, 0),
+     *       max: new Vector3(5, 5, 10),
+     *       opacity: 0.0, // Hidden inside
+     *     }
+     *   ],
+     *   defaultOpacity: 1.0 // Outside is visible
+     * });
+     * ```
+     */
+    setMaskConfig(config, scene) {
+        this.maskConfig = {
+            regions: (config.regions || []).map(region => ({
+                ...region,
+                bbox: new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.matrix),
+                inverseMatrix: region.inverseMatrix ?? region.matrix.clone().invert(),
+            })),
+            defaultOpacity: config.defaultOpacity ?? 1.0,
+        };
+        // Optionally add debug helpers to visualize mask regions in the scene
+        if (scene) {
+            for (const region of this.maskConfig.regions) {
+                addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
+                addOrientedBox3Helper(scene, `mask-region-helper-obb-${region.id}`, new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
+                region.matrix.clone(), 0xff0000);
+            }
+        }
+    }
+    /**
+     * Clear all mask regions and restore default visibility
+     *
+     * @param scene The Three.js scene to remove mask region helpers from. Must be the same scene used when setting the mask config.
+     */
+    clearMaskConfig(scene) {
+        // clear out mask helpers from the scene
+        this.maskConfig.regions.forEach(region => {
+            clearHelper(scene, `mask-region-helper-aabb-${region.id}`);
+            clearHelper(scene, `mask-region-helper-obb-${region.id}`);
+        });
+        this.setMaskConfig({
+            regions: [],
+            defaultOpacity: 1.0,
+        });
+    }
+    /**
+     * Get current mask configuration
+     */
+    getMaskConfig() {
+        return { ...this.maskConfig };
+    }
+    /**
+     * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.
+     * This method should be called on each frame before rendering to ensure that the correct nodes are visible.
+     *
+     * @param pointClouds An array of `PointCloudOctree` instances to update.
+     * @param camera The camera used for rendering the scene. This is used to determine which nodes are in view.
+     * @param renderer The WebGLRenderer instance, used to get the current viewport size for LOD calculations.
+     * @returns An object containing information about visible nodes, number of visible points, and loading status.
+     */
     updatePointClouds(pointClouds, camera, renderer) {
         const result = this.updateVisibility(pointClouds, camera, renderer);
         for (let i = 0; i < pointClouds.length; i++) {
@@ -4261,6 +4481,9 @@ class Potree {
             if (node.level > maxLevel ||
                 !frustums[pointCloudIndex].intersectsBox(node.boundingBox) ||
                 this.shouldClip(pointCloud, node.boundingBox)) {
+                continue;
+            }
+            if (isTreeNode(node) && this.isNodeMaskedOut(pointCloud, node)) {
                 continue;
             }
             numVisiblePoints += node.numPoints;
