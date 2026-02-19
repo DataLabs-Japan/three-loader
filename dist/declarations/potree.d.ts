@@ -29,6 +29,16 @@ export declare class Potree implements IPotree {
     private readonly loadGeometry;
     private maskConfig;
     constructor(version?: PotreeVersion);
+    /**
+     * Load a point cloud from a given URL. The URL is the location of the potree metadata (e.g. `metadata.json`).
+     * The `getUrl` function is used to resolve the URLs of the geometry files, which allows for
+     * custom logic such as signing URLs or fetching from different sources.
+     *
+     * @param url The URL of the point cloud metadata file.
+     * @param getUrl A function to resolve the URLs of the geometry files.
+     * @param xhrRequest Optional function to perform the XHR request. Defaults to `fetch`.
+     * @returns A promise that resolves to the loaded `PointCloudOctree`.
+     */
     loadPointCloud(url: string, getUrl: GetUrlFn, xhrRequest?: (input: RequestInfo, init?: RequestInit) => Promise<Response>): Promise<PointCloudOctree>;
     /**
      * Set mask regions for visibility filtering and opacity control.
@@ -39,7 +49,7 @@ export declare class Potree implements IPotree {
      * @example
      * ```typescript
      * // Show only inside a region (defaultOpacity=0, region.opacity=1)
-     * potree.setMaskRegions({
+     * potree.setMaskConfig({
      *   regions: [
      *     {
      *       modelMatrix: new Matrix4(),
@@ -52,7 +62,7 @@ export declare class Potree implements IPotree {
      * });
      *
      * // Hide inside a region (defaultOpacity=1, region.opacity=0)
-     * potree.setMaskRegions({
+     * potree.setMaskConfig({
      *   regions: [
      *     {
      *       modelMatrix: new Matrix4(),
@@ -65,11 +75,11 @@ export declare class Potree implements IPotree {
      * });
      * ```
      */
-    setMaskRegions(config: MaskConfig, scene?: Object3D): void;
+    setMaskConfig(config: MaskConfig, scene?: Object3D): void;
     /**
      * Clear all mask regions and restore default visibility
      */
-    clearMaskRegions(): void;
+    clearMaskConfig(): void;
     /**
      * Get current mask configuration
      */
@@ -78,6 +88,15 @@ export declare class Potree implements IPotree {
      * Check if a node's bounding box intersects with a visible mask region.
      */
     private nodeIntersectsMask;
+    /**
+     * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.
+     * This method should be called on each frame before rendering to ensure that the correct nodes are visible.
+     *
+     * @param pointClouds An array of `PointCloudOctree` instances to update.
+     * @param camera The camera used for rendering the scene. This is used to determine which nodes are in view.
+     * @param renderer The WebGLRenderer instance, used to get the current viewport size for LOD calculations.
+     * @returns An object containing information about visible nodes, number of visible points, and loading status.
+     */
     updatePointClouds(pointClouds: PointCloudOctree[], camera: Camera, renderer: WebGLRenderer): IVisibilityUpdateResult;
     static pick(pointClouds: PointCloudOctree[], renderer: WebGLRenderer, camera: Camera, ray: Ray, params?: Partial<PickParams>): PickPoint | null;
     get pointBudget(): number;

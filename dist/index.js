@@ -4245,6 +4245,16 @@ class Potree {
         })();
         this.loadGeometry = GEOMETRY_LOADERS[version];
     }
+    /**
+     * Load a point cloud from a given URL. The URL is the location of the potree metadata (e.g. `metadata.json`).
+     * The `getUrl` function is used to resolve the URLs of the geometry files, which allows for
+     * custom logic such as signing URLs or fetching from different sources.
+     *
+     * @param url The URL of the point cloud metadata file.
+     * @param getUrl A function to resolve the URLs of the geometry files.
+     * @param xhrRequest Optional function to perform the XHR request. Defaults to `fetch`.
+     * @returns A promise that resolves to the loaded `PointCloudOctree`.
+     */
     loadPointCloud(url, getUrl, xhrRequest = (input, init) => fetch(input, init)) {
         return this.loadGeometry(url, getUrl, xhrRequest).then(geometry => new PointCloudOctree(this, geometry));
     }
@@ -4257,7 +4267,7 @@ class Potree {
      * @example
      * ```typescript
      * // Show only inside a region (defaultOpacity=0, region.opacity=1)
-     * potree.setMaskRegions({
+     * potree.setMaskConfig({
      *   regions: [
      *     {
      *       modelMatrix: new Matrix4(),
@@ -4270,7 +4280,7 @@ class Potree {
      * });
      *
      * // Hide inside a region (defaultOpacity=1, region.opacity=0)
-     * potree.setMaskRegions({
+     * potree.setMaskConfig({
      *   regions: [
      *     {
      *       modelMatrix: new Matrix4(),
@@ -4283,7 +4293,7 @@ class Potree {
      * });
      * ```
      */
-    setMaskRegions(config, scene) {
+    setMaskConfig(config, scene) {
         this.maskConfig = {
             regions: config.regions || [],
             defaultOpacity: config.defaultOpacity ?? 1.0,
@@ -4298,8 +4308,8 @@ class Potree {
     /**
      * Clear all mask regions and restore default visibility
      */
-    clearMaskRegions() {
-        this.setMaskRegions({
+    clearMaskConfig() {
+        this.setMaskConfig({
             regions: [],
             defaultOpacity: 1.0,
         });
@@ -4330,6 +4340,15 @@ class Potree {
         // If no masks or node doesn't intersect any mask, use default opacity to determine visibility
         return this.maskConfig.defaultOpacity > 0;
     }
+    /**
+     * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.
+     * This method should be called on each frame before rendering to ensure that the correct nodes are visible.
+     *
+     * @param pointClouds An array of `PointCloudOctree` instances to update.
+     * @param camera The camera used for rendering the scene. This is used to determine which nodes are in view.
+     * @param renderer The WebGLRenderer instance, used to get the current viewport size for LOD calculations.
+     * @returns An object containing information about visible nodes, number of visible points, and loading status.
+     */
     updatePointClouds(pointClouds, camera, renderer) {
         const result = this.updateVisibility(pointClouds, camera, renderer);
         for (let i = 0; i < pointClouds.length; i++) {
