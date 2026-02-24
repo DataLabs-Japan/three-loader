@@ -1,5 +1,4 @@
 import {
-  ArrowHelper,
   Box3,
   Camera,
   Frustum,
@@ -190,11 +189,8 @@ export class Potree implements IPotree {
 
     // For debugging: visualize the cuboid masks in the scene
     if (scene) {
-      for (const { id, center, halfExtents, axisX, axisY, axisZ, bbox } of this.masks.cuboids) {
+      for (const { id, bbox } of this.masks.cuboids) {
         addBox3Helper(scene, `mask-region-helper-aabb-${id}`, bbox.clone(), 0x00ff00);
-        scene.add(new ArrowHelper(axisX, center, halfExtents.x, 0xff0000));
-        scene.add(new ArrowHelper(axisY, center, halfExtents.y, 0x00ff00));
-        scene.add(new ArrowHelper(axisZ, center, halfExtents.z, 0x0000ff));
       }
     }
   }
@@ -206,9 +202,8 @@ export class Potree implements IPotree {
    */
   clearMaskConfig(scene: Object3D): void {
     // clear out mask helpers from the scene
-    this.masks.cuboids.forEach(cuboid => {
-      clearHelper(scene, `mask-region-helper-aabb-${cuboid.id}`);
-      clearHelper(scene, `mask-region-helper-obb-${cuboid.id}`);
+    this.masks.cuboids.forEach(({ id }) => {
+      clearHelper(scene, `mask-region-helper-aabb-${id}`);
     });
     this.masks = {
       cuboids: [],

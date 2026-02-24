@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum, Matrix3, ArrowHelper, NormalBlending } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum, Matrix3, NormalBlending } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -4450,11 +4450,8 @@ class Potree {
         };
         // For debugging: visualize the cuboid masks in the scene
         if (scene) {
-            for (const { id, center, halfExtents, axisX, axisY, axisZ, bbox } of this.masks.cuboids) {
+            for (const { id, bbox } of this.masks.cuboids) {
                 addBox3Helper(scene, `mask-region-helper-aabb-${id}`, bbox.clone(), 0x00ff00);
-                scene.add(new ArrowHelper(axisX, center, halfExtents.x, 0xff0000));
-                scene.add(new ArrowHelper(axisY, center, halfExtents.y, 0x00ff00));
-                scene.add(new ArrowHelper(axisZ, center, halfExtents.z, 0x0000ff));
             }
         }
     }
@@ -4465,9 +4462,8 @@ class Potree {
      */
     clearMaskConfig(scene) {
         // clear out mask helpers from the scene
-        this.masks.cuboids.forEach(cuboid => {
-            clearHelper(scene, `mask-region-helper-aabb-${cuboid.id}`);
-            clearHelper(scene, `mask-region-helper-obb-${cuboid.id}`);
+        this.masks.cuboids.forEach(({ id }) => {
+            clearHelper(scene, `mask-region-helper-aabb-${id}`);
         });
         this.masks = {
             cuboids: [],
