@@ -138,12 +138,6 @@ vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
 	return vec4(mix(originalColor.rgb, tintColor, intensity), originalColor.a);
 }
 
-vec3 randomColor(float seed) {
-	// Simple hash function to generate a pseudo-random number based on the seed
-	float rand = fract(sin(seed) * 43758.5453123);
-	return vec3(rand);
-}
-
 void main() {
 	float overrideOpacity = -1.0;
 	vec4 overrideColor = vec4(0.0);
