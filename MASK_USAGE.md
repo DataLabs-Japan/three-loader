@@ -30,31 +30,42 @@ Everything is controlled by opacity values (0 = invisible, 1 = fully visible):
 | Highlight region           | 1.0            | 1.0            | Everything visible (no effect)            |
 | Dim outside                | 0.2            | 1.0            | Region is bright, outside is dimmed       |
 
-### MaskRegion
+### Cuboid
 
-Each mask region defines:
+Each cuboid mask region defines:
 
 - **id**: Unique identifier for the region (string)
-- **matrix**: **Local-to-world** transformation matrix (standard model matrix). This is the transform that positions and orients the mask region in world space.
-- **inverseMatrix** (optional): **World-to-local** transformation matrix. Auto-computed from `matrix` if not provided. Used internally to transform world coordinates to the mask's local space for bounds checking.
-- **min/max**: Bounding box bounds in local space (Vector3)
+- **center**: Center position of the cuboid in world space (Vector3)
+- **rotation**: 3x3 rotation matrix as a 9-element array in column-major order `[m11, m12, m13, m21, m22, m23, m31, m32, m33]`. Defines the orientation of the cuboid axes.
+- **extent**: Total size of the cuboid (Vector3). The half-extents are computed as `extent / 2`.
 - **opacity**: Opacity for points INSIDE this region (0 = invisible, 1 = fully visible)
 
 ```typescript
-// Example: Creating a standard model matrix (local→world)
-const matrix = new Matrix4()
-  .compose(
-    new Vector3(x, y, z),         // Position in world space
-    new Quaternion(...),          // Rotation
-    new Vector3(1, 1, 1)          // Scale
-  );
+// Example: Identity rotation (axis-aligned cuboid)
+const rotation = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+// Example: Rotated cuboid (45° around Z axis)
+const angle = Math.PI / 4;
+const cos = Math.cos(angle);
+const sin = Math.sin(angle);
+const rotation = [
+  cos,
+  sin,
+  0, // X axis in world space
+  -sin,
+  cos,
+  0, // Y axis in world space
+  0,
+  0,
+  1, // Z axis in world space
+];
 ```
 
 ### MaskConfig
 
 Configuration object containing:
 
-- **regions**: Array of mask regions
+- **cuboids**: Array of cuboid mask regions
 - **defaultOpacity**: Opacity for points NOT inside any mask region
 
 ## Usage Examples
@@ -65,18 +76,18 @@ Both `defaultOpacity` and `region.opacity` are 1.0, so everything is visible reg
 
 ```typescript
 import { Potree } from 'three-loader';
-import { Matrix4, Vector3 } from 'three';
+import { Vector3 } from 'three';
 
 const potree = new Potree();
 
 // No masking effect - everything is visible
 potree.setMaskConfig({
-  regions: [
+  cuboids: [
     {
       id: 'region-1',
-      matrix: new Matrix4(), // Identity matrix (world space aligned)
-      min: new Vector3(-10, -10, 0),
-      max: new Vector3(10, 10, 20),
+      center: new Vector3(0, 0, 10),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation (axis-aligned)
+      extent: new Vector3(20, 20, 20), // Total size of the region
       opacity: 1.0, // Points INSIDE are fully visible
     },
   ],
@@ -94,12 +105,12 @@ potree.updatePointClouds(pointClouds, camera, renderer);
 ```typescript
 // Show only points inside the box
 potree.setMaskConfig({
-  regions: [
+  cuboids: [
     {
       id: 'show-region',
-      matrix: new Matrix4(),
-      min: new Vector3(-10, -10, 0),
-      max: new Vector3(10, 10, 20),
+      center: new Vector3(0, 0, 10),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
+      extent: new Vector3(20, 20, 20), // Total size: 20x20x20
       opacity: 1.0, // Points INSIDE are visible
     },
   ],
@@ -114,12 +125,12 @@ potree.setMaskConfig({
 ```typescript
 // Hide points inside a region (e.g., remove a building)
 potree.setMaskConfig({
-  regions: [
+  cuboids: [
     {
       id: 'hide-region',
-      matrix: new Matrix4(),
-      min: new Vector3(-5, -5, 0),
-      max: new Vector3(5, 5, 10),
+      center: new Vector3(0, 0, 5),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
+      extent: new Vector3(10, 10, 10), // Total size: 10x10x10
       opacity: 0.0, // Points INSIDE are hidden
     },
   ],
@@ -134,22 +145,21 @@ When masks overlap, points in the overlapping region get the **maximum opacity**
 ```typescript
 // Two overlapping regions with different opacities
 potree.setMaskConfig({
-  regions: [
+  cuboids: [
     {
       // Region A - dim visibility
       id: 'region-a',
-      matrix: new Matrix4(),
-      min: new Vector3(-10, -10, 0),
-      max: new Vector3(10, 10, 20),
+      center: new Vector3(0, 0, 10),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      extent: new Vector3(20, 20, 20),
       opacity: 0.3, // Points INSIDE region A have 0.3 opacity
     },
     {
       // Region B - overlaps with A, full visibility
-      // Standard local-to-world matrix for a translated region
       id: 'region-b',
-      matrix: new Matrix4().makeTranslation(5, 5, 5), // Position in world space
-      min: new Vector3(-8, -8, 0),
-      max: new Vector3(8, 8, 15),
+      center: new Vector3(5, 5, 5), // Translated position in world space
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      extent: new Vector3(16, 16, 15),
       opacity: 1.0, // Points INSIDE region B have 1.0 opacity
     },
   ],
@@ -167,31 +177,34 @@ potree.setMaskConfig({
 
 ```typescript
 // Remove all masks and restore normal visibility
-potree.clearMaskConfig();
+potree.clearMaskConfig(scene);
 
 // Or explicitly set to no masks
 potree.setMaskConfig({
-  regions: [],
+  cuboids: [],
   defaultOpacity: 1.0,
 });
 ```
 
-### Getting Current Mask Configuration
-
-```typescript
-const currentMasks = potree.getMaskConfig();
-console.log(`Active masks: ${currentMasks.regions.length}`);
-console.log(`Default opacity: ${currentMasks.defaultOpacity}`);
-```
-
 ## How It Works
 
-### Matrix Transformation, why two matrices?
+### Cuboid Transformation
 
-Depending on where it is used,
+Each cuboid is defined by:
 
-- within the CPU-level culling, we can use the node's world bounding box directly to check intersection with the mask's world bounding box (using `matrix`).
-- within the GPU shader, we need to transform each point from world space to the mask's local space to check if it is inside the mask's bounds (using `inverseMatrix`).
+- **center**: Position in world space
+- **rotation**: 3x3 rotation matrix defining the orientation of the cuboid's local axes
+- **extent**: Total size of the cuboid (half-extents are computed internally)
+
+Internally, the system computes:
+
+- **Axis vectors** (axisX, axisY, axisZ) from the rotation matrix
+- **Bounding box** (bbox) in world space for quick intersection testing
+
+The cuboid uses oriented bounding box (OBB) math:
+
+- **CPU-level culling**: Uses the world-space AABB that bounds the OBB for fast intersection tests
+- **GPU shader**: Uses the OBB axes and half-extents for precise per-point containment checks
 
 ### Node Visibility Determination (CPU-level culling)
 
@@ -213,14 +226,39 @@ For each octree node:
 
 For each individual point (more precise than node-level):
 
-1. **Transform to local space**: Point in world coordinates is multiplied by `inverseMatrix` (world→local)
-2. **Bounds check**: Check if transformed point is inside the mask's local bounding box (min/max)
+1. **Transform to cuboid space**: Point in world coordinates is transformed relative to the cuboid's center and axes
+2. **Bounds check**: Check if the transformed point is inside the cuboid's half-extents using the oriented axes
 3. **Calculate opacity**:
-   - If inside: `opacity = max(currentOpacity, mask.opacity)`
+   - If inside: `opacity = max(currentOpacity, cuboid.opacity)`
    - If outside: keep current opacity
 4. **Render**: Use final opacity value
 
 This two-level approach:
 
-- **CPU**: Fast bounding box intersection test to cull entire invisible nodes (saves bandwidth)
-- **GPU**: Precise per-point opacity calculation for loaded nodes (pixel-perfect masking)
+- **CPU**: Fast AABB intersection test to cull entire invisible nodes (saves bandwidth)
+- **GPU**: Precise per-point OBB containment check for loaded nodes (pixel-perfect masking)
+
+## Migration from dl.0.5 to dl.0.6
+
+You no longer need to set the regions directly on the material. Simply call `setMaskConfig` on the Potree instance and it will automatically update the materials of all point clouds.
+
+```typescript
+// -- Old way (dl.0.5):
+pointCloud.material.maskRegionLength = maskRegionUniforms.length
+pointCloud.material.opacityOutOfMasks = 0
+pointCloud.material.maskRegions = maskRegionUniforms
+
+if (pcdTransparency !== undefined && pcdTransparency < 1) {
+  pointCloud.material.enableTransparency()
+  pointCloud.material.blending = NormalBlending
+} else {
+  pointCloud.material.disableTransparency()
+}
+
+// -- New way (dl.0.6):
+potree.setMaskConfig({ ... });
+
+// No need to change transparency settings manually; the system will toggle it automatically.
+```
+
+**Note:** The old material-based approach is deprecated but still works for backward compatibility. However, as it masks points at the shader level, invisible nodes are still loaded and processed, incurring unnecessary network and GPU overhead. The new `setMaskConfig` method provides better performance by filtering out invisible nodes at the CPU level before loading, reducing both network transfer and shader processing costs.

@@ -113,7 +113,18 @@ export interface IPointCloudMaterialUniforms {
   stripeDivisorX: IUniform<number>;
   stripeDivisorY: IUniform<number>;
   pointCloudMixingMode: IUniform<number>;
+
   maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3; opacity: number }[]>;
+  masksCuboid: IUniform<
+    {
+      center: Vector3;
+      halfExtents: Vector3;
+      axisX: Vector3;
+      axisY: Vector3;
+      axisZ: Vector3;
+      opacity: number;
+    }[]
+  >;
 
   // point highlighting based on constraints
   // 0 - no highlighting
@@ -210,6 +221,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
   );
 
   maskRegionLength = 0;
+  maskCuboidCount = 0;
 
   uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>> = {
     bbSize: makeUniform('fv', [0, 0, 0] as [number, number, number]),
@@ -269,6 +281,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     pointCloudMixAngle: makeUniform('f', 31),
 
     maskRegions: makeUniform('a', []),
+    masksCuboid: makeUniform('a', []),
 
     highlightedType: makeUniform('i', 0),
     highlightedPoint0: makeUniform('fv', new Vector3()),
@@ -300,6 +313,14 @@ export class PointCloudMaterial extends RawShaderMaterial {
     modelMatrix: Matrix4;
     min: Vector3;
     max: Vector3;
+    opacity: number;
+  }[];
+  @uniform('masksCuboid') masksCuboid!: {
+    center: Vector3;
+    halfExtents: Vector3;
+    axisX: Vector3;
+    axisY: Vector3;
+    axisZ: Vector3;
     opacity: number;
   }[];
   @uniform('maxSize') maxSize!: number;
@@ -423,6 +444,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
       this.depthMap.dispose();
       this.depthMap = undefined;
     }
+
     if (this.backgroundMap) {
       this.backgroundMap.dispose();
       this.backgroundMap = undefined;
@@ -532,7 +554,10 @@ export class PointCloudMaterial extends RawShaderMaterial {
 
     if (this.maskRegionLength > 0) {
       define(`mask_region_length ${this.maskRegionLength}`);
-      define('override_opacity true');
+    }
+
+    if (this.maskCuboidCount > 0) {
+      define(`mask_cuboid_length ${this.maskCuboidCount}`);
     }
 
     define('MAX_POINT_LIGHTS 0');

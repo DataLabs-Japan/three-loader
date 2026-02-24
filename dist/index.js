@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineBasicMaterial, LineSegments, Matrix4, Frustum } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum, Matrix3, ArrowHelper, NormalBlending } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -456,6 +456,12 @@ varying vec3 overridedColor;
 
 float specularStrength = 1.0;
 
+varying vec4 fragPosition;
+
+#if defined(mask_region_length) || defined(mask_cuboid_length)
+	uniform float opacityOutOfMasks;
+#endif
+
 #if defined mask_region_length
 	struct Region {
 		mat4 modelMatrix;
@@ -463,9 +469,7 @@ float specularStrength = 1.0;
 		vec3 max;
 		float opacity;
 	};
-	uniform float opacityOutOfMasks;
 	uniform Region maskRegions[mask_region_length];
-	varying vec4 fragPosition;
 
 	bool checkWithin(Region region)
 	{
@@ -474,6 +478,32 @@ float specularStrength = 1.0;
 
 		// Check if the fragment is inside the cube in its local space
 		return all(greaterThanEqual(localPos.xyz, region.min)) && all(lessThanEqual(localPos.xyz, region.max));
+	}
+#endif
+
+#if defined mask_cuboid_length
+	struct Cuboid {
+		vec3 center;
+		vec3 halfExtents;
+		vec3 axisX;
+		vec3 axisY;
+		vec3 axisZ;
+		float opacity;
+	};
+	uniform Cuboid masksCuboid[mask_cuboid_length];
+
+	bool checkWithinCuboid(Cuboid cuboid)
+	{
+		// Transform fragment position to cuboid's local space
+		vec3 toFragment = fragPosition.xyz - cuboid.center;
+		float localX = dot(toFragment, cuboid.axisX);
+		float localY = dot(toFragment, cuboid.axisY);
+		float localZ = dot(toFragment, cuboid.axisZ);
+
+		// Check if inside OBB
+		return abs(localX) <= cuboid.halfExtents.x &&
+		       abs(localY) <= cuboid.halfExtents.y &&
+		       abs(localZ) <= cuboid.halfExtents.z;
 	}
 #endif
 
@@ -486,10 +516,18 @@ vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
 	return vec4(mix(originalColor.rgb, tintColor, intensity), originalColor.a);
 }
 
+vec3 randomColor(float seed) {
+	// Simple hash function to generate a pseudo-random number based on the seed
+	float rand = fract(sin(seed) * 43758.5453123);
+	return vec3(rand);
+}
+
 void main() {
+	float overrideOpacity = -1.0;
+	vec4 overrideColor = vec4(0.0);
+
 	#if defined mask_region_length
 		bool isFragmentInAnyMaskRegions = false;
-		float updatedOpacity = 0.0;
 
 		// check whether this fragment is inside any mask regions.
 		// if fragment is within a mask region,
@@ -497,17 +535,42 @@ void main() {
 		for (int i = 0; i < mask_region_length; i++) {
 			if (checkWithin(maskRegions[i])) {
 				isFragmentInAnyMaskRegions = true;
-				updatedOpacity = max(updatedOpacity, maskRegions[i].opacity);
+				overrideOpacity = max(overrideOpacity, maskRegions[i].opacity);
 			}
 		}
 
 		// if this fragment is outside all mask regions, set the fragment's opacity to opacityOutOfMasks.
 		if (!isFragmentInAnyMaskRegions) {
-			updatedOpacity = opacityOutOfMasks;
+			overrideOpacity = opacityOutOfMasks;
 		}
 
 		// discard fragment if fragment's opacity <= 0.0
-		if (updatedOpacity <= 0.0) {
+		if (overrideOpacity <= 0.0) {
+			discard;
+			return;
+		}
+	#endif
+
+	#if defined mask_cuboid_length
+		bool isFragmentInAnyCuboid = false;
+
+		// check whether this fragment is inside any cuboid mask regions.
+		// if fragment is within a cuboid,
+		// set the fragment's opacity to the max opacity found among all overlapping cuboids the fragment is within.
+		for (int i = 0; i < mask_cuboid_length; i++) {
+			if (checkWithinCuboid(masksCuboid[i])) {
+				isFragmentInAnyCuboid = true;
+				overrideOpacity = max(overrideOpacity, masksCuboid[i].opacity);
+			}
+		}
+
+		// if this fragment is outside all cuboid mask regions, set the fragment's opacity to opacityOutOfMasks.
+		if (!isFragmentInAnyCuboid) {
+			overrideOpacity = opacityOutOfMasks;
+		}
+
+		// discard fragment if fragment's opacity <= 0.0
+		if (overrideOpacity <= 0.0) {
 			discard;
 			return;
 		}
@@ -753,9 +816,13 @@ void main() {
 
 	// gl_FragColor = vec4(overridedColor, 0.2);
 
-	#ifdef override_opacity
-		gl_FragColor.a = updatedOpacity;
-	#endif
+	if (overrideOpacity >= 0.0) {
+		gl_FragColor.a = overrideOpacity;
+	}
+
+	if (overrideColor.a > 0.0) {
+		gl_FragColor = vec4(overrideColor.rgb, gl_FragColor.a);
+	}
 
 	if (highlightedType == 2 || highlightedType == 3) {
 		if (vIsHighlighted == 1.0) {
@@ -1502,6 +1569,7 @@ class PointCloudMaterial extends RawShaderMaterial {
         this._classification = DEFAULT_CLASSIFICATION;
         this.classificationTexture = generateClassificationTexture(this._classification);
         this.maskRegionLength = 0;
+        this.maskCuboidCount = 0;
         this.uniforms = {
             bbSize: makeUniform('fv', [0, 0, 0]),
             blendDepthSupplement: makeUniform('f', 0.0),
@@ -1559,6 +1627,7 @@ class PointCloudMaterial extends RawShaderMaterial {
             stripeDivisorY: makeUniform('f', 2),
             pointCloudMixAngle: makeUniform('f', 31),
             maskRegions: makeUniform('a', []),
+            masksCuboid: makeUniform('a', []),
             highlightedType: makeUniform('i', 0),
             highlightedPoint0: makeUniform('fv', new Vector3()),
             highlightedPoint1: makeUniform('fv', new Vector3()),
@@ -1718,7 +1787,9 @@ class PointCloudMaterial extends RawShaderMaterial {
         }
         if (this.maskRegionLength > 0) {
             define(`mask_region_length ${this.maskRegionLength}`);
-            define('override_opacity true');
+        }
+        if (this.maskCuboidCount > 0) {
+            define(`mask_cuboid_length ${this.maskCuboidCount}`);
         }
         define('MAX_POINT_LIGHTS 0');
         define('MAX_DIR_LIGHTS 0');
@@ -1933,6 +2004,9 @@ __decorate([
 __decorate([
     uniform('maskRegions')
 ], PointCloudMaterial.prototype, "maskRegions", undefined);
+__decorate([
+    uniform('masksCuboid')
+], PointCloudMaterial.prototype, "masksCuboid", undefined);
 __decorate([
     uniform('maxSize')
 ], PointCloudMaterial.prototype, "maxSize", undefined);
@@ -4033,45 +4107,6 @@ const addBox3Helper = (scene, name, box, color = 0x00ff00) => {
     scene.add(boxHelper);
     return boxHelper;
 };
-/**
- * Add an oriented Box3Helper to visualize a Box3 with a model matrix in the scene.
- * Will manually construct the boundary using Line2 since Box3Helper is AABB only.
- *
- * @param scene Object3D to add the helper to
- * @param name Name of the helper object
- * @param box Box3 to visualize
- * @param modelMatrix Matrix4 representing the orientation and position of the box
- * @param color Color of the helper lines
- */
-const addOrientedBox3Helper = (scene, name, box, modelMatrix, color = 0x00ff00) => {
-    clearHelper(scene, name);
-    const corners = [
-        new Vector3(box.min.x, box.min.y, box.min.z),
-        new Vector3(box.max.x, box.min.y, box.min.z),
-        new Vector3(box.max.x, box.min.y, box.max.z),
-        new Vector3(box.min.x, box.min.y, box.max.z),
-        new Vector3(box.min.x, box.max.y, box.min.z),
-        new Vector3(box.max.x, box.max.y, box.min.z),
-        new Vector3(box.max.x, box.max.y, box.max.z),
-        new Vector3(box.min.x, box.max.y, box.max.z),
-    ].map(corner => corner.applyMatrix4(modelMatrix));
-    // prettier-ignore
-    const indices = new Uint16Array([
-        0, 1, 1, 2, 2, 3, 3, 0,
-        4, 5, 5, 6, 6, 7, 7, 4,
-        0, 4, 1, 5, 2, 6, 3, 7 // Vertical edges
-    ]);
-    const positions = new Float32Array(corners.flatMap(c => [c.x, c.y, c.z]));
-    const geometry = new BufferGeometry();
-    geometry.setIndex(new BufferAttribute(indices, 1));
-    geometry.setAttribute('position', new BufferAttribute(positions, 3));
-    const material = new LineBasicMaterial({ color: color });
-    const lineSegments = new LineSegments(geometry, material);
-    lineSegments.name = name;
-    lineSegments.userData.type = 'debug';
-    scene.add(lineSegments);
-    return lineSegments;
-};
 
 class LRUItem {
     constructor(node) {
@@ -4230,9 +4265,10 @@ class Potree {
         this.maxNumNodesLoading = MAX_NUM_NODES_LOADING;
         this.features = FEATURES;
         this.lru = new LRU(this._pointBudget);
-        this.maskConfig = {
-            regions: [],
+        this.masks = {
+            cuboids: [],
             defaultOpacity: 1.0,
+            needsUpdate: false,
         };
         /**
          * Check if a node is masked out based on the current mask configuration.
@@ -4242,8 +4278,8 @@ class Potree {
             // Reusable temporary objects to avoid allocations in hot path
             const tempNodeBox = new Box3();
             return (pointCloud, node) => {
-                if (this.maskConfig.regions.length === 0) {
-                    return this.maskConfig.defaultOpacity <= 0;
+                if (this.masks.cuboids.length === 0) {
+                    return this.masks.defaultOpacity <= 0;
                 }
                 const nodeBBox = node.boundingBox;
                 let hasVisibleRegion = false;
@@ -4251,7 +4287,7 @@ class Potree {
                 // Transform node box to world space once
                 tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
                 // For each mask region, check how this node relates to the region.
-                for (const mask of this.maskConfig.regions) {
+                for (const mask of this.masks.cuboids) {
                     if (mask.opacity > 0) {
                         // Visible region: node contributes if it intersects this region.
                         if (tempNodeBox.intersectsBox(mask.bbox)) {
@@ -4273,7 +4309,7 @@ class Potree {
                 if (containedInInvisibleRegion) {
                     return true;
                 }
-                return this.maskConfig.defaultOpacity <= 0;
+                return this.masks.defaultOpacity <= 0;
             };
         })();
         this.updateVisibilityStructures = (() => {
@@ -4349,12 +4385,12 @@ class Potree {
      * ```typescript
      * // Show only inside a region (defaultOpacity=0, region.opacity=1)
      * potree.setMaskConfig({
-     *   regions: [
+     *   cuboids: [
      *     {
      *       id: 'region-1',
-     *       matrix: new Matrix4(),
-     *       min: new Vector3(-10, -10, 0),
-     *       max: new Vector3(10, 10, 20),
+     *       center: new Vector3(0, 0, 10),
+     *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation (9-element array)
+     *       extent: new Vector3(20, 20, 20), // Total size of the region
      *       opacity: 1.0, // Visible inside
      *     }
      *   ],
@@ -4363,12 +4399,12 @@ class Potree {
      *
      * // Hide inside a region (defaultOpacity=1, region.opacity=0)
      * potree.setMaskConfig({
-     *   regions: [
+     *   cuboids: [
      *     {
      *       id: 'region-2',
-     *       matrix: new Matrix4(),
-     *       min: new Vector3(-5, -5, 0),
-     *       max: new Vector3(5, 5, 10),
+     *       center: new Vector3(0, 0, 5),
+     *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
+     *       extent: new Vector3(10, 10, 10),
      *       opacity: 0.0, // Hidden inside
      *     }
      *   ],
@@ -4377,20 +4413,48 @@ class Potree {
      * ```
      */
     setMaskConfig(config, scene) {
-        this.maskConfig = {
-            regions: (config.regions || []).map(region => ({
-                ...region,
-                bbox: new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.matrix),
-                inverseMatrix: region.inverseMatrix ?? region.matrix.clone().invert(),
-            })),
-            defaultOpacity: config.defaultOpacity ?? 1.0,
+        this.masks = {
+            cuboids: config.cuboids.map(({ id, center, rotation, extent, opacity }) => {
+                const halfExtents = extent.clone().multiplyScalar(0.5);
+                const rot = new Matrix3().fromArray(rotation);
+                // Column vectors = world-space axes
+                const axisX = new Vector3(rot.elements[0], rot.elements[1], rot.elements[2]);
+                const axisY = new Vector3(rot.elements[3], rot.elements[4], rot.elements[5]);
+                const axisZ = new Vector3(rot.elements[6], rot.elements[7], rot.elements[8]);
+                axisX.normalize();
+                axisY.normalize();
+                axisZ.normalize();
+                // Compute AABB that bounds this OBB
+                // For each axis, extend by the projection of all half-extents
+                const radius = new Vector3(Math.abs(axisX.x * halfExtents.x) +
+                    Math.abs(axisY.x * halfExtents.y) +
+                    Math.abs(axisZ.x * halfExtents.z), Math.abs(axisX.y * halfExtents.x) +
+                    Math.abs(axisY.y * halfExtents.y) +
+                    Math.abs(axisZ.y * halfExtents.z), Math.abs(axisX.z * halfExtents.x) +
+                    Math.abs(axisY.z * halfExtents.y) +
+                    Math.abs(axisZ.z * halfExtents.z));
+                const bbox = new Box3(center.clone().sub(radius), center.clone().add(radius));
+                return {
+                    id,
+                    center: center.clone(),
+                    halfExtents,
+                    axisX,
+                    axisY,
+                    axisZ,
+                    opacity,
+                    bbox,
+                };
+            }),
+            defaultOpacity: config.defaultOpacity,
+            needsUpdate: true,
         };
-        // Optionally add debug helpers to visualize mask regions in the scene
+        // For debugging: visualize the cuboid masks in the scene
         if (scene) {
-            for (const region of this.maskConfig.regions) {
-                addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
-                addOrientedBox3Helper(scene, `mask-region-helper-obb-${region.id}`, new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
-                region.matrix.clone(), 0xff0000);
+            for (const { id, center, halfExtents, axisX, axisY, axisZ, bbox } of this.masks.cuboids) {
+                addBox3Helper(scene, `mask-region-helper-aabb-${id}`, bbox.clone(), 0x00ff00);
+                scene.add(new ArrowHelper(axisX, center, halfExtents.x, 0xff0000));
+                scene.add(new ArrowHelper(axisY, center, halfExtents.y, 0x00ff00));
+                scene.add(new ArrowHelper(axisZ, center, halfExtents.z, 0x0000ff));
             }
         }
     }
@@ -4401,20 +4465,15 @@ class Potree {
      */
     clearMaskConfig(scene) {
         // clear out mask helpers from the scene
-        this.maskConfig.regions.forEach(region => {
-            clearHelper(scene, `mask-region-helper-aabb-${region.id}`);
-            clearHelper(scene, `mask-region-helper-obb-${region.id}`);
+        this.masks.cuboids.forEach(cuboid => {
+            clearHelper(scene, `mask-region-helper-aabb-${cuboid.id}`);
+            clearHelper(scene, `mask-region-helper-obb-${cuboid.id}`);
         });
-        this.setMaskConfig({
-            regions: [],
+        this.masks = {
+            cuboids: [],
             defaultOpacity: 1.0,
-        });
-    }
-    /**
-     * Get current mask configuration
-     */
-    getMaskConfig() {
-        return { ...this.maskConfig };
+            needsUpdate: true,
+        };
     }
     /**
      * Update the visibility of nodes in all loaded point clouds based on the camera view and point budget.
@@ -4435,6 +4494,31 @@ class Potree {
             pointCloud.material.updateMaterial(pointCloud, pointCloud.visibleNodes, camera, renderer);
             pointCloud.updateVisibleBounds();
             pointCloud.updateBoundingBoxes();
+            if (this.masks.needsUpdate) {
+                pointCloud.material.maskCuboidCount = this.masks.cuboids.length;
+                pointCloud.material.opacityOutOfMasks = this.masks.defaultOpacity;
+                pointCloud.material.masksCuboid = this.masks.cuboids.map(cuboid => ({
+                    center: cuboid.center,
+                    halfExtents: cuboid.halfExtents,
+                    axisX: cuboid.axisX,
+                    axisY: cuboid.axisY,
+                    axisZ: cuboid.axisZ,
+                    opacity: cuboid.opacity,
+                }));
+                // If any mask region has opacity < 1, or if the default opacity is < 1, we need to enable transparency in the material.
+                if (this.masks.defaultOpacity < 1 ||
+                    (this.masks.cuboids.length > 0 && this.masks.cuboids.some(c => c.opacity < 1))) {
+                    pointCloud.material.enableTransparency();
+                    pointCloud.material.blending = NormalBlending;
+                }
+                else {
+                    pointCloud.material.disableTransparency();
+                }
+                pointCloud.material.updateShaders();
+            }
+        }
+        if (this.masks.needsUpdate) {
+            this.masks.needsUpdate = false;
         }
         this.lru.freeMemory();
         return result;

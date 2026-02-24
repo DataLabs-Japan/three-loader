@@ -71,6 +71,14 @@ export interface IPointCloudMaterialUniforms {
         max: Vector3;
         opacity: number;
     }[]>;
+    masksCuboid: IUniform<{
+        center: Vector3;
+        halfExtents: Vector3;
+        axisX: Vector3;
+        axisY: Vector3;
+        axisZ: Vector3;
+        opacity: number;
+    }[]>;
     highlightedType: IUniform<number>;
     highlightedPoint0: IUniform<Vector3>;
     highlightedPoint1: IUniform<Vector3>;
@@ -104,6 +112,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     private _classification;
     private classificationTexture;
     maskRegionLength: number;
+    maskCuboidCount: number;
     uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>>;
     bbSize: [number, number, number];
     clipExtent: [number, number, number, number];
@@ -120,6 +129,14 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
         modelMatrix: Matrix4;
         min: Vector3;
         max: Vector3;
+        opacity: number;
+    }[];
+    masksCuboid: {
+        center: Vector3;
+        halfExtents: Vector3;
+        axisX: Vector3;
+        axisY: Vector3;
+        axisZ: Vector3;
         opacity: number;
     }[];
     maxSize: number;

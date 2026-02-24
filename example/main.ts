@@ -68,7 +68,6 @@ function createSlider(version: string): HTMLInputElement {
       return;
     }
     cloud.potree.pointBudget = parseInt(slider.value, 10);
-    console.log(cloud.potree.pointBudget);
   });
   return slider;
 }

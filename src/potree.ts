@@ -1,8 +1,11 @@
 import {
+  ArrowHelper,
   Box3,
   Camera,
   Frustum,
+  Matrix3,
   Matrix4,
+  NormalBlending,
   Object3D,
   OrthographicCamera,
   PerspectiveCamera,
@@ -33,11 +36,12 @@ import {
   IPotree,
   IVisibilityUpdateResult,
   MaskConfig,
+  MaskCuboid,
   PCOGeometry,
   PickPoint,
 } from './types';
 import { BinaryHeap } from './utils/binary-heap';
-import { addBox3Helper, addOrientedBox3Helper, Box3Helper, clearHelper } from './utils/box3-helper';
+import { addBox3Helper, Box3Helper, clearHelper } from './utils/box3-helper';
 import { LRU } from './utils/lru';
 
 export class QueueItem {
@@ -72,9 +76,10 @@ export class Potree implements IPotree {
   lru = new LRU(this._pointBudget);
 
   private readonly loadGeometry: GeometryLoader;
-  private maskConfig: InternalMaskConfig = {
-    regions: [],
+  private masks: InternalMaskConfig = {
+    cuboids: [],
     defaultOpacity: 1.0,
+    needsUpdate: false,
   };
 
   constructor(version: PotreeVersion = 'v1') {
@@ -111,12 +116,12 @@ export class Potree implements IPotree {
    * ```typescript
    * // Show only inside a region (defaultOpacity=0, region.opacity=1)
    * potree.setMaskConfig({
-   *   regions: [
+   *   cuboids: [
    *     {
    *       id: 'region-1',
-   *       matrix: new Matrix4(),
-   *       min: new Vector3(-10, -10, 0),
-   *       max: new Vector3(10, 10, 20),
+   *       center: new Vector3(0, 0, 10),
+   *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation (9-element array)
+   *       extent: new Vector3(20, 20, 20), // Total size of the region
    *       opacity: 1.0, // Visible inside
    *     }
    *   ],
@@ -125,12 +130,12 @@ export class Potree implements IPotree {
    *
    * // Hide inside a region (defaultOpacity=1, region.opacity=0)
    * potree.setMaskConfig({
-   *   regions: [
+   *   cuboids: [
    *     {
    *       id: 'region-2',
-   *       matrix: new Matrix4(),
-   *       min: new Vector3(-5, -5, 0),
-   *       max: new Vector3(5, 5, 10),
+   *       center: new Vector3(0, 0, 5),
+   *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
+   *       extent: new Vector3(10, 10, 10),
    *       opacity: 0.0, // Hidden inside
    *     }
    *   ],
@@ -139,26 +144,57 @@ export class Potree implements IPotree {
    * ```
    */
   setMaskConfig(config: MaskConfig, scene?: Object3D): void {
-    this.maskConfig = {
-      regions: (config.regions || []).map(region => ({
-        ...region,
-        bbox: new Box3(region.min.clone(), region.max.clone()).applyMatrix4(region.matrix),
-        inverseMatrix: region.inverseMatrix ?? region.matrix.clone().invert(),
-      })),
-      defaultOpacity: config.defaultOpacity ?? 1.0,
+    this.masks = {
+      cuboids: config.cuboids.map<MaskCuboid>(({ id, center, rotation, extent, opacity }) => {
+        const halfExtents: Vector3 = extent.clone().multiplyScalar(0.5);
+        const rot = new Matrix3().fromArray(rotation);
+
+        // Column vectors = world-space axes
+        const axisX = new Vector3(rot.elements[0], rot.elements[1], rot.elements[2]);
+        const axisY = new Vector3(rot.elements[3], rot.elements[4], rot.elements[5]);
+        const axisZ = new Vector3(rot.elements[6], rot.elements[7], rot.elements[8]);
+
+        axisX.normalize();
+        axisY.normalize();
+        axisZ.normalize();
+
+        // Compute AABB that bounds this OBB
+        // For each axis, extend by the projection of all half-extents
+        const radius: Vector3 = new Vector3(
+          Math.abs(axisX.x * halfExtents.x) +
+            Math.abs(axisY.x * halfExtents.y) +
+            Math.abs(axisZ.x * halfExtents.z),
+          Math.abs(axisX.y * halfExtents.x) +
+            Math.abs(axisY.y * halfExtents.y) +
+            Math.abs(axisZ.y * halfExtents.z),
+          Math.abs(axisX.z * halfExtents.x) +
+            Math.abs(axisY.z * halfExtents.y) +
+            Math.abs(axisZ.z * halfExtents.z),
+        );
+        const bbox: Box3 = new Box3(center.clone().sub(radius), center.clone().add(radius));
+
+        return {
+          id,
+          center: center.clone(),
+          halfExtents,
+          axisX,
+          axisY,
+          axisZ,
+          opacity,
+          bbox,
+        };
+      }),
+      defaultOpacity: config.defaultOpacity,
+      needsUpdate: true,
     };
 
-    // Optionally add debug helpers to visualize mask regions in the scene
+    // For debugging: visualize the cuboid masks in the scene
     if (scene) {
-      for (const region of this.maskConfig.regions) {
-        addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
-        addOrientedBox3Helper(
-          scene,
-          `mask-region-helper-obb-${region.id}`,
-          new Box3(region.min.clone(), region.max.clone()), // need to use untransformed box since the helper will apply the model matrix
-          region.matrix.clone(),
-          0xff0000,
-        );
+      for (const { id, center, halfExtents, axisX, axisY, axisZ, bbox } of this.masks.cuboids) {
+        addBox3Helper(scene, `mask-region-helper-aabb-${id}`, bbox.clone(), 0x00ff00);
+        scene.add(new ArrowHelper(axisX, center, halfExtents.x, 0xff0000));
+        scene.add(new ArrowHelper(axisY, center, halfExtents.y, 0x00ff00));
+        scene.add(new ArrowHelper(axisZ, center, halfExtents.z, 0x0000ff));
       }
     }
   }
@@ -170,21 +206,15 @@ export class Potree implements IPotree {
    */
   clearMaskConfig(scene: Object3D): void {
     // clear out mask helpers from the scene
-    this.maskConfig.regions.forEach(region => {
-      clearHelper(scene, `mask-region-helper-aabb-${region.id}`);
-      clearHelper(scene, `mask-region-helper-obb-${region.id}`);
+    this.masks.cuboids.forEach(cuboid => {
+      clearHelper(scene, `mask-region-helper-aabb-${cuboid.id}`);
+      clearHelper(scene, `mask-region-helper-obb-${cuboid.id}`);
     });
-    this.setMaskConfig({
-      regions: [],
+    this.masks = {
+      cuboids: [],
       defaultOpacity: 1.0,
-    });
-  }
-
-  /**
-   * Get current mask configuration
-   */
-  getMaskConfig(): MaskConfig {
-    return { ...this.maskConfig };
+      needsUpdate: true,
+    };
   }
 
   /**
@@ -196,8 +226,8 @@ export class Potree implements IPotree {
     const tempNodeBox = new Box3();
 
     return (pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean => {
-      if (this.maskConfig.regions.length === 0) {
-        return this.maskConfig.defaultOpacity <= 0;
+      if (this.masks.cuboids.length === 0) {
+        return this.masks.defaultOpacity <= 0;
       }
 
       const nodeBBox = node.boundingBox;
@@ -208,7 +238,7 @@ export class Potree implements IPotree {
       tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
 
       // For each mask region, check how this node relates to the region.
-      for (const mask of this.maskConfig.regions) {
+      for (const mask of this.masks.cuboids) {
         if (mask.opacity > 0) {
           // Visible region: node contributes if it intersects this region.
           if (tempNodeBox.intersectsBox(mask.bbox)) {
@@ -232,7 +262,7 @@ export class Potree implements IPotree {
         return true;
       }
 
-      return this.maskConfig.defaultOpacity <= 0;
+      return this.masks.defaultOpacity <= 0;
     };
   })();
 
@@ -261,6 +291,35 @@ export class Potree implements IPotree {
       pointCloud.material.updateMaterial(pointCloud, pointCloud.visibleNodes, camera, renderer);
       pointCloud.updateVisibleBounds();
       pointCloud.updateBoundingBoxes();
+
+      if (this.masks.needsUpdate) {
+        pointCloud.material.maskCuboidCount = this.masks.cuboids.length;
+        pointCloud.material.opacityOutOfMasks = this.masks.defaultOpacity;
+        pointCloud.material.masksCuboid = this.masks.cuboids.map(cuboid => ({
+          center: cuboid.center,
+          halfExtents: cuboid.halfExtents,
+          axisX: cuboid.axisX,
+          axisY: cuboid.axisY,
+          axisZ: cuboid.axisZ,
+          opacity: cuboid.opacity,
+        }));
+
+        // If any mask region has opacity < 1, or if the default opacity is < 1, we need to enable transparency in the material.
+        if (
+          this.masks.defaultOpacity < 1 ||
+          (this.masks.cuboids.length > 0 && this.masks.cuboids.some(c => c.opacity < 1))
+        ) {
+          pointCloud.material.enableTransparency();
+          pointCloud.material.blending = NormalBlending;
+        } else {
+          pointCloud.material.disableTransparency();
+        }
+        pointCloud.material.updateShaders();
+      }
+    }
+
+    if (this.masks.needsUpdate) {
+      this.masks.needsUpdate = false;
     }
 
     this.lru.freeMemory();
