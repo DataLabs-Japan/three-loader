@@ -4506,9 +4506,9 @@ class Potree {
                 }
                 pointCloud.material.needsUpdate = true;
                 pointCloud.material.updateShaders();
-                this.masks.needsUpdate = false;
             }
         }
+        this.masks.needsUpdate = false;
         this.lru.freeMemory();
         return result;
     }
