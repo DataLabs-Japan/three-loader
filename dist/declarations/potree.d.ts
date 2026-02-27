@@ -27,7 +27,7 @@ export declare class Potree implements IPotree {
     };
     lru: LRU;
     private readonly loadGeometry;
-    private maskConfig;
+    private masks;
     constructor(version?: PotreeVersion);
     /**
      * Load a point cloud from a given URL. The URL is the location of the potree metadata (e.g. `metadata.json`).
@@ -50,12 +50,12 @@ export declare class Potree implements IPotree {
      * ```typescript
      * // Show only inside a region (defaultOpacity=0, region.opacity=1)
      * potree.setMaskConfig({
-     *   regions: [
+     *   cuboids: [
      *     {
      *       id: 'region-1',
-     *       matrix: new Matrix4(),
-     *       min: new Vector3(-10, -10, 0),
-     *       max: new Vector3(10, 10, 20),
+     *       center: new Vector3(0, 0, 10),
+     *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation (9-element array)
+     *       extent: new Vector3(20, 20, 20), // Total size of the region
      *       opacity: 1.0, // Visible inside
      *     }
      *   ],
@@ -64,12 +64,12 @@ export declare class Potree implements IPotree {
      *
      * // Hide inside a region (defaultOpacity=1, region.opacity=0)
      * potree.setMaskConfig({
-     *   regions: [
+     *   cuboids: [
      *     {
      *       id: 'region-2',
-     *       matrix: new Matrix4(),
-     *       min: new Vector3(-5, -5, 0),
-     *       max: new Vector3(5, 5, 10),
+     *       center: new Vector3(0, 0, 5),
+     *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
+     *       extent: new Vector3(10, 10, 10),
      *       opacity: 0.0, // Hidden inside
      *     }
      *   ],
@@ -84,10 +84,6 @@ export declare class Potree implements IPotree {
      * @param scene The Three.js scene to remove mask region helpers from. Must be the same scene used when setting the mask config.
      */
     clearMaskConfig(scene: Object3D): void;
-    /**
-     * Get current mask configuration
-     */
-    getMaskConfig(): MaskConfig;
     /**
      * Check if a node is masked out based on the current mask configuration.
      * A node is considered masked out if it should be hidden according to the mask regions and their opacities.

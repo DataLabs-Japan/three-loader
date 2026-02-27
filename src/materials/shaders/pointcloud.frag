@@ -78,6 +78,12 @@ varying vec3 overridedColor;
 
 float specularStrength = 1.0;
 
+varying vec4 fragPosition;
+
+#if defined(mask_region_length) || defined(mask_cuboid_length)
+	uniform float opacityOutOfMasks;
+#endif
+
 #if defined mask_region_length
 	struct Region {
 		mat4 modelMatrix;
@@ -85,9 +91,7 @@ float specularStrength = 1.0;
 		vec3 max;
 		float opacity;
 	};
-	uniform float opacityOutOfMasks;
 	uniform Region maskRegions[mask_region_length];
-	varying vec4 fragPosition;
 
 	bool checkWithin(Region region)
 	{
@@ -96,6 +100,32 @@ float specularStrength = 1.0;
 
 		// Check if the fragment is inside the cube in its local space
 		return all(greaterThanEqual(localPos.xyz, region.min)) && all(lessThanEqual(localPos.xyz, region.max));
+	}
+#endif
+
+#if defined mask_cuboid_length
+	struct Cuboid {
+		vec3 center;
+		vec3 halfExtents;
+		vec3 axisX;
+		vec3 axisY;
+		vec3 axisZ;
+		float opacity;
+	};
+	uniform Cuboid masksCuboid[mask_cuboid_length];
+
+	bool checkWithinCuboid(Cuboid cuboid)
+	{
+		// Transform fragment position to cuboid's local space
+		vec3 toFragment = fragPosition.xyz - cuboid.center;
+		float localX = dot(toFragment, cuboid.axisX);
+		float localY = dot(toFragment, cuboid.axisY);
+		float localZ = dot(toFragment, cuboid.axisZ);
+
+		// Check if inside OBB
+		return abs(localX) <= cuboid.halfExtents.x &&
+		       abs(localY) <= cuboid.halfExtents.y &&
+		       abs(localZ) <= cuboid.halfExtents.z;
 	}
 #endif
 
@@ -109,9 +139,11 @@ vec4 addTint(vec4 originalColor, vec3 tintColor, float intensity) {
 }
 
 void main() {
+	float overrideOpacity = -1.0;
+	vec4 overrideColor = vec4(0.0);
+
 	#if defined mask_region_length
 		bool isFragmentInAnyMaskRegions = false;
-		float updatedOpacity = 0.0;
 
 		// check whether this fragment is inside any mask regions.
 		// if fragment is within a mask region,
@@ -119,17 +151,42 @@ void main() {
 		for (int i = 0; i < mask_region_length; i++) {
 			if (checkWithin(maskRegions[i])) {
 				isFragmentInAnyMaskRegions = true;
-				updatedOpacity = max(updatedOpacity, maskRegions[i].opacity);
+				overrideOpacity = max(overrideOpacity, maskRegions[i].opacity);
 			}
 		}
 
 		// if this fragment is outside all mask regions, set the fragment's opacity to opacityOutOfMasks.
 		if (!isFragmentInAnyMaskRegions) {
-			updatedOpacity = opacityOutOfMasks;
+			overrideOpacity = opacityOutOfMasks;
 		}
 
 		// discard fragment if fragment's opacity <= 0.0
-		if (updatedOpacity <= 0.0) {
+		if (overrideOpacity <= 0.0) {
+			discard;
+			return;
+		}
+	#endif
+
+	#if defined mask_cuboid_length
+		bool isFragmentInAnyCuboid = false;
+
+		// check whether this fragment is inside any cuboid mask regions.
+		// if fragment is within a cuboid,
+		// set the fragment's opacity to the max opacity found among all overlapping cuboids the fragment is within.
+		for (int i = 0; i < mask_cuboid_length; i++) {
+			if (checkWithinCuboid(masksCuboid[i])) {
+				isFragmentInAnyCuboid = true;
+				overrideOpacity = max(overrideOpacity, masksCuboid[i].opacity);
+			}
+		}
+
+		// if this fragment is outside all cuboid mask regions, set the fragment's opacity to opacityOutOfMasks.
+		if (!isFragmentInAnyCuboid) {
+			overrideOpacity = opacityOutOfMasks;
+		}
+
+		// discard fragment if fragment's opacity <= 0.0
+		if (overrideOpacity <= 0.0) {
 			discard;
 			return;
 		}
@@ -375,9 +432,13 @@ void main() {
 
 	// gl_FragColor = vec4(overridedColor, 0.2);
 
-	#ifdef override_opacity
-		gl_FragColor.a = updatedOpacity;
-	#endif
+	if (overrideOpacity >= 0.0) {
+		gl_FragColor.a = overrideOpacity;
+	}
+
+	if (overrideColor.a > 0.0) {
+		gl_FragColor = vec4(overrideColor.rgb, gl_FragColor.a);
+	}
 
 	if (highlightedType == 2 || highlightedType == 3) {
 		if (vIsHighlighted == 1.0) {

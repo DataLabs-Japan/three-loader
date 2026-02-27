@@ -22,18 +22,40 @@ export interface MaskRegion {
   bbox?: Box3;
 }
 
+export interface Cuboid {
+  id: string;
+  center: Vector3;
+  rotation: number[];
+  extent: Vector3;
+  opacity: number;
+  bbox?: Box3;
+}
+
+export interface MaskCuboid {
+  id: string;
+  center: Vector3;
+  halfExtents: Vector3;
+  axisX: Vector3;
+  axisY: Vector3;
+  axisZ: Vector3;
+  opacity: number;
+  bbox: Box3;
+}
+
 export interface MaskConfig {
   /** Array of mask regions */
-  regions: MaskRegion[];
+  cuboids: Cuboid[];
   /** Default opacity for points not inside any mask region */
   defaultOpacity: number;
 }
 
 export interface InternalMaskConfig {
   /** Array of mask regions */
-  regions: Required<MaskRegion>[];
+  cuboids: Required<MaskCuboid>[];
   /** Default opacity for points not inside any mask region */
   defaultOpacity: number;
+  /** Flag to indicate if the mask config has changed and needs to be re-applied to the point clouds */
+  needsUpdate: boolean;
 }
 
 export interface IPointCloudTreeNode {
