@@ -309,14 +309,12 @@ export class Potree implements IPotree {
         } else {
           pointCloud.material.disableTransparency();
         }
+        pointCloud.material.needsUpdate = true;
         pointCloud.material.updateShaders();
       }
     }
 
-    if (this.masks.needsUpdate) {
-      this.masks.needsUpdate = false;
-    }
-
+    this.masks.needsUpdate = false;
     this.lru.freeMemory();
 
     return result;
