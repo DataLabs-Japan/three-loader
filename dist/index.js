@@ -1,4 +1,4 @@
-import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum, Matrix3, NormalBlending } from 'three';
+import { ShaderMaterial, Color, Vector4, CanvasTexture, LinearFilter, DataTexture, RGBAFormat, NearestFilter, Vector3, Vector2, RawShaderMaterial, Texture, AdditiveBlending, NoBlending, LessEqualDepth, Box3, EventDispatcher, Sphere, BufferGeometry, Points, WebGLRenderTarget, Scene, Object3D, BufferAttribute, Uint8BufferAttribute, LineSegments, LineBasicMaterial, Matrix4, Frustum, Matrix3 } from 'three';
 import { P as PointAttributes, V as Version, a as PointAttributeName } from './version-DabiREzy.js';
 export { c as POINT_ATTRIBUTES, b as POINT_ATTRIBUTE_TYPES } from './version-DabiREzy.js';
 import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 } from './point-attributes-Ck93P4aI.js';
@@ -4495,15 +4495,6 @@ class Potree {
                     axisZ: cuboid.axisZ,
                     opacity: cuboid.opacity,
                 }));
-                // If any mask region has opacity < 1, or if the default opacity is < 1, we need to enable transparency in the material.
-                if (this.masks.defaultOpacity < 1 ||
-                    (this.masks.cuboids.length > 0 && this.masks.cuboids.some(c => c.opacity < 1))) {
-                    pointCloud.material.enableTransparency();
-                    pointCloud.material.blending = NormalBlending;
-                }
-                else {
-                    pointCloud.material.disableTransparency();
-                }
                 pointCloud.material.needsUpdate = true;
                 pointCloud.material.updateShaders();
             }
