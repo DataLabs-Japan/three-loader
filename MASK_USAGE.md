@@ -238,7 +238,7 @@ This two-level approach:
 - **CPU**: Fast AABB intersection test to cull entire invisible nodes (saves bandwidth)
 - **GPU**: Precise per-point OBB containment check for loaded nodes (pixel-perfect masking)
 
-## Migration from dl.0.5 to dl.0.6
+## Migration from dl.0.5 to >=dl.0.6
 
 You no longer need to set the regions directly on the material. Simply call `setMaskConfig` on the Potree instance and it will automatically update the materials of all point clouds.
 
@@ -255,10 +255,15 @@ if (pcdTransparency !== undefined && pcdTransparency < 1) {
   pointCloud.material.disableTransparency()
 }
 
-// -- New way (dl.0.6):
-potree.setMaskConfig({ ... });
+// -- New way (>=dl.0.6):
+// If the pointcloud have transparency, enable it manually.
+pointClouds.forEach((pointCloud) => {
+  pointCloud.material.opacity = defaultOpacity
+  pointCloud.material.enableTransparency()
+  pointCloud.material.blending = NormalBlending
+})
 
-// No need to change transparency settings manually; the system will toggle it automatically.
+potree.setMaskConfig({ ... });
 ```
 
 **Note:** The old material-based approach is deprecated but still works for backward compatibility. However, as it masks points at the shader level, invisible nodes are still loaded and processed, incurring unnecessary network and GPU overhead. The new `setMaskConfig` method provides better performance by filtering out invisible nodes at the CPU level before loading, reducing both network transfer and shader processing costs.

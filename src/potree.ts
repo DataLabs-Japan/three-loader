@@ -4,7 +4,6 @@ import {
   Frustum,
   Matrix3,
   Matrix4,
-  NormalBlending,
   Object3D,
   OrthographicCamera,
   PerspectiveCamera,
@@ -299,16 +298,6 @@ export class Potree implements IPotree {
           opacity: cuboid.opacity,
         }));
 
-        // If any mask region has opacity < 1, or if the default opacity is < 1, we need to enable transparency in the material.
-        if (
-          this.masks.defaultOpacity < 1 ||
-          (this.masks.cuboids.length > 0 && this.masks.cuboids.some(c => c.opacity < 1))
-        ) {
-          pointCloud.material.enableTransparency();
-          pointCloud.material.blending = NormalBlending;
-        } else {
-          pointCloud.material.disableTransparency();
-        }
         pointCloud.material.needsUpdate = true;
         pointCloud.material.updateShaders();
       }
