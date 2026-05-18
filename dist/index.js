@@ -3258,7 +3258,7 @@ class BinaryLoader {
         return parseInt(property, 10) === name;
     }
 }
-BinaryLoader.WORKER_POOL = new WorkerPool$1(32, new Worker(new URL('./binary-decoder.worker.js', import.meta.url)));
+BinaryLoader.WORKER_POOL = new WorkerPool$1(32, new Worker(new URL('./binary-decoder.worker.js', import.meta.url), { type: 'module' }));
 
 // -------------------------------------------------------------------------------------------------
 // Converted to Typescript and adapted from https://github.com/potree/potree
@@ -3461,11 +3461,15 @@ var WorkerType;
 function createWorker(type) {
     switch (type) {
         case WorkerType.DECODER_WORKER: {
-            const worker = new Worker(new URL('./decoder.worker.js', import.meta.url));
+            const worker = new Worker(new URL('./decoder.worker.js', import.meta.url), {
+                type: 'module',
+            });
             return worker;
         }
         case WorkerType.DECODER_WORKER_GLTF: {
-            const worker = new Worker(new URL('./gltf-decoder.worker.js', import.meta.url));
+            const worker = new Worker(new URL('./gltf-decoder.worker.js', import.meta.url), {
+                type: 'module',
+            });
             return worker;
         }
         default:
