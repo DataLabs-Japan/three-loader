@@ -10,11 +10,15 @@ export enum WorkerType {
 function createWorker(type: WorkerType): Worker {
   switch (type) {
     case WorkerType.DECODER_WORKER: {
-      const worker = new Worker(new URL('./decoder.worker.js', import.meta.url));
+      const worker = new Worker(new URL('./decoder.worker.js', import.meta.url), {
+        type: 'module',
+      });
       return worker;
     }
     case WorkerType.DECODER_WORKER_GLTF: {
-      const worker = new Worker(new URL('./gltf-decoder.worker.js', import.meta.url));
+      const worker = new Worker(new URL('./gltf-decoder.worker.js', import.meta.url), {
+        type: 'module',
+      });
       return worker;
     }
     default:
