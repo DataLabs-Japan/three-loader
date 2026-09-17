@@ -40,6 +40,18 @@ A region also carries an **operation**:
 
 Because the last matching region wins, `exclude` is how a hole is carved out of an earlier region, and a further `include` over part of that hole puts it back.
 
+**The first operation seeds the mask.** A leading `include` starts from nothing and grows it — *keep only what I outlined*. A leading `exclude` starts from everything and shrinks it — *hide what I outlined*, with everything else kept. Both are legitimate, and the difference is only visible if the seed is implemented: seeding empty either way renders a mask that opens with an `exclude` as an empty scene.
+
+```typescript
+// "Keep only this wall."
+regions: [{ id: 'wall', kind: MaskRegionKind.Prism, positions: wall, opacity: 1 }]
+
+// "Hide this parked van." Everything except the van stays.
+regions: [
+  { id: 'van', kind: MaskRegionKind.Prism, positions: van, operation: MaskOperation.Exclude, opacity: 1 },
+]
+```
+
 ### Groups: several independent masks at once
 
 Regions sharing a **group** are one mask, ordered among themselves. Separate groups are **unioned**, so an `exclude` in one mask can never erase what another mask kept.
@@ -299,7 +311,7 @@ Every region — boxes and prisms alike — is packed into a single **data textu
 1. **Walk the regions in order** and test containment:
    - Box: transform the world position into the box's local space and compare against its half-extents.
    - Prism: project the world position into the prism's fitted plane basis with two dot products, reject against the outline's 2D bounding box, then run an even-odd crossing test over the flattened outline.
-2. **Last match wins**: an `include` region sets the opacity to its own; an `exclude` region resets it to `defaultOpacity`.
+2. **Seed, then last match wins**: the mask's first operation seeds every point (`include` → kept by nothing, `exclude` → kept by everything), then each region containing it assigns — `include` sets the opacity to its own, `exclude` drops back to `defaultOpacity`.
 3. **Render**: use the final opacity, discarding the fragment when it is 0.
 
 The picker renders through the same material, so a point the shader discards cannot be picked either.
@@ -351,9 +363,11 @@ writeMaskDataTexture(texture, packMaskRegions(nextRegions, defaultOpacity));
 
 And for the same answer without a GPU — picking, draw-time validation — use the TypeScript containment test on a prepared region:
 
+`isInsideMaskRegion` answers for one region; `isInsideMaskGroup` answers for a whole mask, applying the ordering and the seeding rule exactly as the shader does — use that one unless you really mean a single region.
+
 ```typescript
-const prepared = prepareMaskRegion(region);
-if (prepared && isInsideMaskRegion(point, prepared)) { /* … */ }
+const prepared = regions.map(prepareMaskRegion).filter((region) => region !== null);
+if (isInsideMaskGroup(point, prepared)) { /* … */ }
 ```
 
 The GLSL and TypeScript containment tests are the one unavoidable duplicate, so they are pinned to a shared fixture (`src/mask/__tests__/containment.fixture.ts`) asserted in CI.

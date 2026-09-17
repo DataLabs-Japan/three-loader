@@ -119,6 +119,12 @@ float maskRegionCount() {
    is only folded in once the group ends. Regions of a group arrive contiguously, so a change of
    group index is the end of one.
 
+   **The group's first operation seeds it.** A leading include starts from nothing and grows —
+   "keep only what I outlined". A leading exclude starts from everything and shrinks — "hide what
+   I outlined". Both are legitimate masks, and the difference is invisible unless the seed is
+   implemented: seeding empty regardless would render a mask that opens with an exclude as an
+   empty scene, which is not what the detector produces from the same regions.
+
    A point no group kept takes the outside-everything default. */
 float maskEvaluate(vec3 worldPos, out bool inside) {
   vec4 header = maskTexel(0.0);
@@ -142,7 +148,9 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
         result = groupOpacity;
       }
       group = entry.w;
-      groupInside = false;
+      // This entry is the group's first, so its operation is the seed.
+      groupInside = entry.x >= MASK_FLAG_EXCLUDE;
+      groupOpacity = entry.z;
     }
 
     bool isPrism = mod(entry.x, 2.0) >= 0.5;

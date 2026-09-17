@@ -33,6 +33,14 @@ export interface InternalMaskConfig {
     regions: PreparedMaskRegion[];
     /** Default opacity for points not inside any mask region */
     defaultOpacity: number;
+    /**
+     * Whether any mask opens with an `exclude`, which seeds it from *everything kept*.
+     *
+     * Such a mask keeps points that lie inside none of its regions, so no node can be culled for
+     * falling outside them — the cheap "outside every region, therefore invisible" rule stops
+     * holding the moment one exists.
+     */
+    hasExcludeSeededGroup: boolean;
 }
 export interface IPointCloudTreeNode {
     id: number;

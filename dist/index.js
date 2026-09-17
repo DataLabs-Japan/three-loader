@@ -208,6 +208,29 @@ function isInsideMaskRegion(point, region) {
         return false;
     return isInsideFlatPolygon(basis.flat, coordU, coordW);
 }
+/**
+ * Whether one mask keeps a world point — its regions evaluated in order.
+ *
+ * The CPU counterpart of the exported GLSL chunk's ordering loop, and the rule the detector
+ * applies: the mask's **first operation seeds it**, then each region assigns. A leading include
+ * starts from nothing and grows ("keep only what I outlined"); a leading exclude starts from
+ * everything and shrinks ("hide what I outlined"). Seeding empty regardless would answer "nothing
+ * is kept" for every mask that opens with an exclude.
+ *
+ * @param point The world point to test.
+ * @param regions One mask's regions, in order. An empty list keeps nothing.
+ */
+function isInsideMaskGroup(point, regions) {
+    if (regions.length === 0)
+        return false;
+    let inside = regions[0].operation === MaskOperation.Exclude;
+    for (const region of regions) {
+        if (!isInsideMaskRegion(point, region))
+            continue;
+        inside = region.operation !== MaskOperation.Exclude;
+    }
+    return inside;
+}
 /** Whether a world-space box could contain any point of the region (conservative: may say yes). */
 function maskRegionIntersectsBox(region, box) {
     if (region.kind === MaskRegionKind.Cuboid)
@@ -425,6 +448,12 @@ float maskRegionCount() {
    is only folded in once the group ends. Regions of a group arrive contiguously, so a change of
    group index is the end of one.
 
+   **The group's first operation seeds it.** A leading include starts from nothing and grows —
+   "keep only what I outlined". A leading exclude starts from everything and shrinks — "hide what
+   I outlined". Both are legitimate masks, and the difference is invisible unless the seed is
+   implemented: seeding empty regardless would render a mask that opens with an exclude as an
+   empty scene, which is not what the detector produces from the same regions.
+
    A point no group kept takes the outside-everything default. */
 float maskEvaluate(vec3 worldPos, out bool inside) {
   vec4 header = maskTexel(0.0);
@@ -448,7 +477,9 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
         result = groupOpacity;
       }
       group = entry.w;
-      groupInside = false;
+      // This entry is the group's first, so its operation is the seed.
+      groupInside = entry.x >= MASK_FLAG_EXCLUDE;
+      groupOpacity = entry.z;
     }
 
     bool isPrism = mod(entry.x, 2.0) >= 0.5;
@@ -4829,6 +4860,7 @@ class Potree {
         this.masks = {
             regions: [],
             defaultOpacity: 1.0,
+            hasExcludeSeededGroup: false,
         };
         /**
          * The packed mask texture both this library's point cloud shader and any other renderer in the
@@ -4851,6 +4883,11 @@ class Potree {
             return (pointCloud, node) => {
                 if (this.masks.regions.length === 0) {
                     return this.masks.defaultOpacity <= 0;
+                }
+                // A mask seeded by an exclude keeps everything its regions do not cover, so "outside every
+                // region" no longer means invisible and there is nothing safe to cull on.
+                if (this.masks.hasExcludeSeededGroup) {
+                    return false;
                 }
                 const nodeBBox = node.boundingBox;
                 let hasVisibleRegion = false;
@@ -4999,6 +5036,8 @@ class Potree {
         this.masks = {
             regions: packed.regions,
             defaultOpacity: config.defaultOpacity,
+            hasExcludeSeededGroup: packed.regions.some((region, index) => region.operation === MaskOperation.Exclude &&
+                (index === 0 || packed.regions[index - 1].group !== region.group)),
         };
         this.maskShaderEnabled = true;
         // For debugging: visualize the box masks in the scene. A prism is infinite along its normal,
@@ -5223,5 +5262,5 @@ class Potree {
     }
 }
 
-export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, isInsideFlatPolygon, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
+export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, isInsideFlatPolygon, isInsideMaskGroup, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
 //# sourceMappingURL=index.js.map

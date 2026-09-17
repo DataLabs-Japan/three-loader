@@ -33,7 +33,7 @@ import {
   packMaskRegions,
   writeMaskDataTexture,
 } from './mask';
-import { MaskConfig, MaskRegionKind } from './mask/types';
+import { MaskConfig, MaskOperation, MaskRegionKind } from './mask/types';
 import { isGeometryNode, isTreeNode } from './type-predicates';
 import {
   InternalMaskConfig,
@@ -83,6 +83,7 @@ export class Potree implements IPotree {
   private masks: InternalMaskConfig = {
     regions: [],
     defaultOpacity: 1.0,
+    hasExcludeSeededGroup: false,
   };
 
   /**
@@ -184,6 +185,11 @@ export class Potree implements IPotree {
     this.masks = {
       regions: packed.regions,
       defaultOpacity: config.defaultOpacity,
+      hasExcludeSeededGroup: packed.regions.some(
+        (region, index) =>
+          region.operation === MaskOperation.Exclude &&
+          (index === 0 || packed.regions[index - 1].group !== region.group),
+      ),
     };
     this.maskShaderEnabled = true;
 
@@ -221,6 +227,12 @@ export class Potree implements IPotree {
     return (pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean => {
       if (this.masks.regions.length === 0) {
         return this.masks.defaultOpacity <= 0;
+      }
+
+      // A mask seeded by an exclude keeps everything its regions do not cover, so "outside every
+      // region" no longer means invisible and there is nothing safe to cull on.
+      if (this.masks.hasExcludeSeededGroup) {
+        return false;
       }
 
       const nodeBBox = node.boundingBox;

@@ -153,6 +153,29 @@ export function isInsideMaskRegion(point: Vector3, region: PreparedMaskRegion): 
   return isInsideFlatPolygon(basis.flat, coordU, coordW);
 }
 
+/**
+ * Whether one mask keeps a world point — its regions evaluated in order.
+ *
+ * The CPU counterpart of the exported GLSL chunk's ordering loop, and the rule the detector
+ * applies: the mask's **first operation seeds it**, then each region assigns. A leading include
+ * starts from nothing and grows ("keep only what I outlined"); a leading exclude starts from
+ * everything and shrinks ("hide what I outlined"). Seeding empty regardless would answer "nothing
+ * is kept" for every mask that opens with an exclude.
+ *
+ * @param point The world point to test.
+ * @param regions One mask's regions, in order. An empty list keeps nothing.
+ */
+export function isInsideMaskGroup(point: Vector3, regions: PreparedMaskRegion[]): boolean {
+  if (regions.length === 0) return false;
+
+  let inside = regions[0].operation === MaskOperation.Exclude;
+  for (const region of regions) {
+    if (!isInsideMaskRegion(point, region)) continue;
+    inside = region.operation !== MaskOperation.Exclude;
+  }
+  return inside;
+}
+
 /** Whether a world-space box could contain any point of the region (conservative: may say yes). */
 export function maskRegionIntersectsBox(region: PreparedMaskRegion, box: Box3): boolean {
   if (region.kind === MaskRegionKind.Cuboid) return box.intersectsBox(region.bbox);

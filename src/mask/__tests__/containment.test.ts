@@ -6,7 +6,12 @@ import {
   MASK_HEADER_TEXELS,
   MASK_PAYLOAD_OFFSET,
 } from '../constants';
-import { fitPrismBasis, isInsideMaskRegion, prepareMaskRegion } from '../geometry';
+import {
+  fitPrismBasis,
+  isInsideMaskGroup,
+  isInsideMaskRegion,
+  prepareMaskRegion,
+} from '../geometry';
 import { packMaskRegions } from '../packing';
 import { MaskOperation, MaskRegionKind } from '../types';
 import { CONTAINMENT_CASES } from './containment.fixture';
@@ -77,6 +82,77 @@ describe('prism basis', () => {
       new Vector3(0, 4, 5),
     ])!;
     expect(bent.deviation).toBeGreaterThan(0.1);
+  });
+});
+
+describe('ordered evaluation', () => {
+  // Two overlapping squares in the same plane: `outer` contains `inner`.
+  const outer = [
+    new Vector3(0, 0, 0),
+    new Vector3(10, 0, 0),
+    new Vector3(10, 10, 0),
+    new Vector3(0, 10, 0),
+  ];
+  const inner = [
+    new Vector3(3, 3, 0),
+    new Vector3(7, 3, 0),
+    new Vector3(7, 7, 0),
+    new Vector3(3, 7, 0),
+  ];
+
+  const group = (...regions: { positions: Vector3[]; operation?: MaskOperation }[]) =>
+    regions
+      .map((region, index) =>
+        prepareMaskRegion(
+          {
+            kind: MaskRegionKind.Prism,
+            id: `r${index}`,
+            positions: region.positions,
+            operation: region.operation,
+            opacity: 1,
+          },
+          index,
+        ),
+      )
+      .filter(region => region !== null);
+
+  const inInner = new Vector3(5, 5, 0);
+  const inOuterOnly = new Vector3(1, 1, 0);
+  const outsideBoth = new Vector3(50, 50, 0);
+
+  it('keeps only what a leading include outlines', () => {
+    const mask = group({ positions: outer });
+    expect(isInsideMaskGroup(inOuterOnly, mask)).toBe(true);
+    expect(isInsideMaskGroup(outsideBoth, mask)).toBe(false);
+  });
+
+  it('keeps everything a leading exclude does NOT outline', () => {
+    // The rule that seeding empty gets wrong: a mask opening with an exclude starts from the whole
+    // cloud and shrinks it, so a point nowhere near it is still kept.
+    const mask = group({ positions: inner, operation: MaskOperation.Exclude });
+    expect(isInsideMaskGroup(inInner, mask)).toBe(false);
+    expect(isInsideMaskGroup(outsideBoth, mask)).toBe(true);
+    expect(isInsideMaskGroup(inOuterOnly, mask)).toBe(true);
+  });
+
+  it('lets a later outline paint over an earlier one, both ways', () => {
+    const carved = group(
+      { positions: outer },
+      { positions: inner, operation: MaskOperation.Exclude },
+    );
+    expect(isInsideMaskGroup(inOuterOnly, carved)).toBe(true);
+    expect(isInsideMaskGroup(inInner, carved)).toBe(false);
+
+    const restored = group(
+      { positions: outer },
+      { positions: inner, operation: MaskOperation.Exclude },
+      { positions: inner },
+    );
+    expect(isInsideMaskGroup(inInner, restored)).toBe(true);
+  });
+
+  it('keeps nothing for a mask with no regions', () => {
+    expect(isInsideMaskGroup(inInner, [])).toBe(false);
   });
 });
 
