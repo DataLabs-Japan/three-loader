@@ -71,14 +71,7 @@ export interface IPointCloudMaterialUniforms {
         max: Vector3;
         opacity: number;
     }[]>;
-    masksCuboid: IUniform<{
-        center: Vector3;
-        halfExtents: Vector3;
-        axisX: Vector3;
-        axisY: Vector3;
-        axisZ: Vector3;
-        opacity: number;
-    }[]>;
+    uMaskRegionTex: IUniform<Texture | null>;
     highlightedType: IUniform<number>;
     highlightedPoint0: IUniform<Vector3>;
     highlightedPoint1: IUniform<Vector3>;
@@ -112,7 +105,11 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
     private _classification;
     private classificationTexture;
     maskRegionLength: number;
-    maskCuboidCount: number;
+    /**
+     * Whether the texture-driven mask path is compiled into the shader. Set once, when masking is
+     * first used; every later mask change is a texture rewrite, never a recompile.
+     */
+    useMaskTexture: boolean;
     uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>>;
     bbSize: [number, number, number];
     clipExtent: [number, number, number, number];
@@ -131,14 +128,7 @@ export declare class PointCloudMaterial extends RawShaderMaterial {
         max: Vector3;
         opacity: number;
     }[];
-    masksCuboid: {
-        center: Vector3;
-        halfExtents: Vector3;
-        axisX: Vector3;
-        axisY: Vector3;
-        axisZ: Vector3;
-        opacity: number;
-    }[];
+    maskRegionTexture: Texture | null;
     maxSize: number;
     minSize: number;
     octreeSize: number;

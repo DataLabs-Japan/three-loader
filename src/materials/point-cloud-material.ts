@@ -26,6 +26,7 @@ import {
   DEFAULT_RGB_GAMMA,
   PERSPECTIVE_CAMERA,
 } from '../constants';
+import { MASK_CHUNK_TOKEN, MASK_GLSL_CHUNK } from '../mask/glsl';
 import { PointCloudOctree } from '../point-cloud-octree';
 import { PointCloudOctreeNode } from '../point-cloud-octree-node';
 import { byLevelAndIndex } from '../utils/utils';
@@ -115,16 +116,7 @@ export interface IPointCloudMaterialUniforms {
   pointCloudMixingMode: IUniform<number>;
 
   maskRegions: IUniform<{ modelMatrix: Matrix4; min: Vector3; max: Vector3; opacity: number }[]>;
-  masksCuboid: IUniform<
-    {
-      center: Vector3;
-      halfExtents: Vector3;
-      axisX: Vector3;
-      axisY: Vector3;
-      axisZ: Vector3;
-      opacity: number;
-    }[]
-  >;
+  uMaskRegionTex: IUniform<Texture | null>;
 
   // point highlighting based on constraints
   // 0 - no highlighting
@@ -221,7 +213,12 @@ export class PointCloudMaterial extends RawShaderMaterial {
   );
 
   maskRegionLength = 0;
-  maskCuboidCount = 0;
+
+  /**
+   * Whether the texture-driven mask path is compiled into the shader. Set once, when masking is
+   * first used; every later mask change is a texture rewrite, never a recompile.
+   */
+  useMaskTexture = false;
 
   uniforms: IPointCloudMaterialUniforms & Record<string, IUniform<any>> = {
     bbSize: makeUniform('fv', [0, 0, 0] as [number, number, number]),
@@ -281,7 +278,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     pointCloudMixAngle: makeUniform('f', 31),
 
     maskRegions: makeUniform('a', []),
-    masksCuboid: makeUniform('a', []),
+    uMaskRegionTex: makeUniform('t', null),
 
     highlightedType: makeUniform('i', 0),
     highlightedPoint0: makeUniform('fv', new Vector3()),
@@ -315,14 +312,7 @@ export class PointCloudMaterial extends RawShaderMaterial {
     max: Vector3;
     opacity: number;
   }[];
-  @uniform('masksCuboid') masksCuboid!: {
-    center: Vector3;
-    halfExtents: Vector3;
-    axisX: Vector3;
-    axisY: Vector3;
-    axisZ: Vector3;
-    opacity: number;
-  }[];
+  @uniform('uMaskRegionTex') maskRegionTexture!: Texture | null;
   @uniform('maxSize') maxSize!: number;
   @uniform('minSize') minSize!: number;
   @uniform('octreeSize') octreeSize!: number;
@@ -556,14 +546,19 @@ export class PointCloudMaterial extends RawShaderMaterial {
       define(`mask_region_length ${this.maskRegionLength}`);
     }
 
-    if (this.maskCuboidCount > 0) {
-      define(`mask_cuboid_length ${this.maskCuboidCount}`);
+    if (this.useMaskTexture) {
+      define('mask_texture');
     }
 
     define('MAX_POINT_LIGHTS 0');
     define('MAX_DIR_LIGHTS 0');
 
-    parts.push(shaderSrc);
+    // The masking code is spliced in where the shader declares it belongs — after the precision
+    // block — rather than prepended with the defines, and comes from the same source any other
+    // renderer in the scene injects, so the two cannot drift apart.
+    parts.push(
+      this.useMaskTexture ? shaderSrc.replace(MASK_CHUNK_TOKEN, MASK_GLSL_CHUNK) : shaderSrc,
+    );
 
     return parts.join('\n');
   }

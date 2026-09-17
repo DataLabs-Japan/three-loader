@@ -80,7 +80,7 @@ float specularStrength = 1.0;
 
 varying vec4 fragPosition;
 
-#if defined(mask_region_length) || defined(mask_cuboid_length)
+#if defined(mask_region_length)
 	uniform float opacityOutOfMasks;
 #endif
 
@@ -103,31 +103,10 @@ varying vec4 fragPosition;
 	}
 #endif
 
-#if defined mask_cuboid_length
-	struct Cuboid {
-		vec3 center;
-		vec3 halfExtents;
-		vec3 axisX;
-		vec3 axisY;
-		vec3 axisZ;
-		float opacity;
-	};
-	uniform Cuboid masksCuboid[mask_cuboid_length];
-
-	bool checkWithinCuboid(Cuboid cuboid)
-	{
-		// Transform fragment position to cuboid's local space
-		vec3 toFragment = fragPosition.xyz - cuboid.center;
-		float localX = dot(toFragment, cuboid.axisX);
-		float localY = dot(toFragment, cuboid.axisY);
-		float localZ = dot(toFragment, cuboid.axisZ);
-
-		// Check if inside OBB
-		return abs(localX) <= cuboid.halfExtents.x &&
-		       abs(localY) <= cuboid.halfExtents.y &&
-		       abs(localZ) <= cuboid.halfExtents.z;
-	}
-#endif
+/* The masking mechanism — the containment test and the ordered painting loop — is injected here
+   from `mask/glsl.ts` when the `mask_texture` path is compiled in, so the point cloud and any
+   other renderer masking by the same texture run the identical code. */
+//__MASK_CHUNK__
 
 varying float vIsHighlighted;
 uniform int highlightedType;
@@ -167,23 +146,12 @@ void main() {
 		}
 	#endif
 
-	#if defined mask_cuboid_length
-		bool isFragmentInAnyCuboid = false;
-
-		// check whether this fragment is inside any cuboid mask regions.
-		// if fragment is within a cuboid,
-		// set the fragment's opacity to the max opacity found among all overlapping cuboids the fragment is within.
-		for (int i = 0; i < mask_cuboid_length; i++) {
-			if (checkWithinCuboid(masksCuboid[i])) {
-				isFragmentInAnyCuboid = true;
-				overrideOpacity = max(overrideOpacity, masksCuboid[i].opacity);
-			}
-		}
-
-		// if this fragment is outside all cuboid mask regions, set the fragment's opacity to opacityOutOfMasks.
-		if (!isFragmentInAnyCuboid) {
-			overrideOpacity = opacityOutOfMasks;
-		}
+	#if defined mask_texture
+		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
+		// the mask's outside-everything default. Both come out of the texture, so nothing here
+		// depends on how many regions there are.
+		bool isFragmentInsideMask = false;
+		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
 
 		// discard fragment if fragment's opacity <= 0.0
 		if (overrideOpacity <= 0.0) {
@@ -432,9 +400,15 @@ void main() {
 
 	// gl_FragColor = vec4(overridedColor, 0.2);
 
-	if (overrideOpacity >= 0.0) {
-		gl_FragColor.a = overrideOpacity;
-	}
+	// Not in point-index mode: there the alpha channel carries part of the encoded index, and the
+	// picker renders through the masking material so a masked-out point cannot be picked — the
+	// discard above is the whole of masking's job there, and writing an opacity over the index
+	// would break the pick it is meant to gate.
+	#if !defined(color_type_point_index)
+		if (overrideOpacity >= 0.0) {
+			gl_FragColor.a = overrideOpacity;
+		}
+	#endif
 
 	if (overrideColor.a > 0.0) {
 		gl_FragColor = vec4(overrideColor.rgb, gl_FragColor.a);
