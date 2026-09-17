@@ -1,8 +1,8 @@
 import {
   Box3,
   Camera,
+  DataTexture,
   Frustum,
-  Matrix3,
   Matrix4,
   Object3D,
   OrthographicCamera,
@@ -26,6 +26,14 @@ import { ClipMode } from './materials';
 import { PointCloudOctree } from './point-cloud-octree';
 import { PointCloudOctreeNode } from './point-cloud-octree-node';
 import { PickParams, PointCloudOctreePicker } from './point-cloud-octree-picker';
+import {
+  createMaskDataTexture,
+  maskRegionContainsBox,
+  maskRegionIntersectsBox,
+  packMaskRegions,
+  writeMaskDataTexture,
+} from './mask';
+import { MaskConfig, MaskRegionKind } from './mask/types';
 import { isGeometryNode, isTreeNode } from './type-predicates';
 import {
   InternalMaskConfig,
@@ -33,8 +41,6 @@ import {
   IPointCloudTreeNode,
   IPotree,
   IVisibilityUpdateResult,
-  MaskConfig,
-  MaskCuboid,
   PCOGeometry,
   PickPoint,
 } from './types';
@@ -75,10 +81,31 @@ export class Potree implements IPotree {
 
   private readonly loadGeometry: GeometryLoader;
   private masks: InternalMaskConfig = {
-    cuboids: [],
+    regions: [],
     defaultOpacity: 1.0,
     needsUpdate: false,
   };
+
+  /**
+   * The packed mask texture both this library's point cloud shader and any other renderer in the
+   * scene sample. Allocated once at a fixed size and only ever rewritten — see `mask/constants`.
+   */
+  private readonly maskTexture: DataTexture = createMaskDataTexture();
+
+  /**
+   * Whether the mask path has been compiled into the point cloud shader. Latched on the first
+   * `setMaskConfig` and never unlatched: a lasso mask changes on every click, and a shader
+   * recompile per vertex — which a region-count `#define` would force — is not viable.
+   */
+  private maskShaderEnabled = false;
+
+  /**
+   * The packed mask texture, for another material in the scene to mask by exactly the same data.
+   * It is the live texture, not a copy: bind it once and every later mask change reaches it.
+   */
+  get maskDataTexture(): DataTexture {
+    return this.maskTexture;
+  }
 
   constructor(version: PotreeVersion = 'v1') {
     this.loadGeometry = GEOMETRY_LOADERS[version];
@@ -105,16 +132,25 @@ export class Potree implements IPotree {
   }
 
   /**
-   * Set mask regions for visibility filtering and opacity control.
+   * Set the mask the point clouds render through.
    *
-   * @param config Mask configuration with regions and default opacity
-   * @param scene Optional Three.js scene to add debug helpers for mask regions. If not provided, no helpers will be added.
+   * Regions come in their natural form — an oriented box, or a polygon prism given as a closed
+   * coplanar outline extruded infinitely both ways along its plane normal. This library fits each
+   * prism's plane basis, flattens it, and packs every region into one texture the shader samples.
+   *
+   * **Order is significant.** Regions paint in list order and a later region overwrites an earlier
+   * one where they overlap, so an outline can carve a hole out of an earlier one and a further
+   * outline can put part of that hole back.
+   *
+   * @param config The mask's regions (in order) and the opacity for points inside none of them.
+   * @param scene Optional scene to add debug AABB helpers to. Prisms have no finite AABB, so only
+   *   boxes get one.
    *
    * @example
    * ```typescript
-   * // Show only inside a region (defaultOpacity=0, region.opacity=1)
+   * // Show only inside a box (defaultOpacity=0, region.opacity=1)
    * potree.setMaskConfig({
-   *   cuboids: [
+   *   regions: [
    *     {
    *       id: 'region-1',
    *       center: new Vector3(0, 0, 10),
@@ -126,70 +162,39 @@ export class Potree implements IPotree {
    *   defaultOpacity: 0.0 // Outside is hidden
    * });
    *
-   * // Hide inside a region (defaultOpacity=1, region.opacity=0)
+   * // Keep an outlined region, then cut a hole out of it
    * potree.setMaskConfig({
-   *   cuboids: [
+   *   regions: [
+   *     { id: 'keep', kind: MaskRegionKind.Prism, positions: outline, opacity: 1.0 },
    *     {
-   *       id: 'region-2',
-   *       center: new Vector3(0, 0, 5),
-   *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
-   *       extent: new Vector3(10, 10, 10),
-   *       opacity: 0.0, // Hidden inside
-   *     }
+   *       id: 'hole',
+   *       kind: MaskRegionKind.Prism,
+   *       positions: hole,
+   *       operation: MaskOperation.Exclude,
+   *       opacity: 1.0,
+   *     },
    *   ],
-   *   defaultOpacity: 1.0 // Outside is visible
+   *   defaultOpacity: 0.0
    * });
    * ```
    */
   setMaskConfig(config: MaskConfig, scene?: Object3D): void {
+    const packed = packMaskRegions(config.regions, config.defaultOpacity);
+    writeMaskDataTexture(this.maskTexture, packed);
+
     this.masks = {
-      cuboids: config.cuboids.map<MaskCuboid>(({ id, center, rotation, extent, opacity }) => {
-        const halfExtents: Vector3 = extent.clone().multiplyScalar(0.5);
-        const rot = new Matrix3().fromArray(rotation);
-
-        // Column vectors = world-space axes
-        const axisX = new Vector3(rot.elements[0], rot.elements[1], rot.elements[2]);
-        const axisY = new Vector3(rot.elements[3], rot.elements[4], rot.elements[5]);
-        const axisZ = new Vector3(rot.elements[6], rot.elements[7], rot.elements[8]);
-
-        axisX.normalize();
-        axisY.normalize();
-        axisZ.normalize();
-
-        // Compute AABB that bounds this OBB
-        // For each axis, extend by the projection of all half-extents
-        const radius: Vector3 = new Vector3(
-          Math.abs(axisX.x * halfExtents.x) +
-            Math.abs(axisY.x * halfExtents.y) +
-            Math.abs(axisZ.x * halfExtents.z),
-          Math.abs(axisX.y * halfExtents.x) +
-            Math.abs(axisY.y * halfExtents.y) +
-            Math.abs(axisZ.y * halfExtents.z),
-          Math.abs(axisX.z * halfExtents.x) +
-            Math.abs(axisY.z * halfExtents.y) +
-            Math.abs(axisZ.z * halfExtents.z),
-        );
-        const bbox: Box3 = new Box3(center.clone().sub(radius), center.clone().add(radius));
-
-        return {
-          id,
-          center: center.clone(),
-          halfExtents,
-          axisX,
-          axisY,
-          axisZ,
-          opacity,
-          bbox,
-        };
-      }),
+      regions: packed.regions,
       defaultOpacity: config.defaultOpacity,
       needsUpdate: true,
     };
+    this.maskShaderEnabled = true;
 
-    // For debugging: visualize the cuboid masks in the scene
+    // For debugging: visualize the box masks in the scene. A prism is infinite along its normal,
+    // so it has no AABB to draw.
     if (scene) {
-      for (const { id, bbox } of this.masks.cuboids) {
-        addBox3Helper(scene, `mask-region-helper-aabb-${id}`, bbox.clone(), 0x00ff00);
+      for (const region of this.masks.regions) {
+        if (region.kind !== MaskRegionKind.Cuboid) continue;
+        addBox3Helper(scene, `mask-region-helper-aabb-${region.id}`, region.bbox.clone(), 0x00ff00);
       }
     }
   }
@@ -201,14 +206,10 @@ export class Potree implements IPotree {
    */
   clearMaskConfig(scene: Object3D): void {
     // clear out mask helpers from the scene
-    this.masks.cuboids.forEach(({ id }) => {
+    this.masks.regions.forEach(({ id }) => {
       clearHelper(scene, `mask-region-helper-aabb-${id}`);
     });
-    this.masks = {
-      cuboids: [],
-      defaultOpacity: 1.0,
-      needsUpdate: true,
-    };
+    this.setMaskConfig({ regions: [], defaultOpacity: 1.0 });
   }
 
   /**
@@ -220,7 +221,7 @@ export class Potree implements IPotree {
     const tempNodeBox = new Box3();
 
     return (pointCloud: PointCloudOctree, node: PointCloudOctreeNode): boolean => {
-      if (this.masks.cuboids.length === 0) {
+      if (this.masks.regions.length === 0) {
         return this.masks.defaultOpacity <= 0;
       }
 
@@ -232,15 +233,15 @@ export class Potree implements IPotree {
       tempNodeBox.copy(nodeBBox).applyMatrix4(pointCloud.matrixWorld);
 
       // For each mask region, check how this node relates to the region.
-      for (const mask of this.masks.cuboids) {
+      for (const mask of this.masks.regions) {
         if (mask.opacity > 0) {
           // Visible region: node contributes if it intersects this region.
-          if (tempNodeBox.intersectsBox(mask.bbox)) {
+          if (maskRegionIntersectsBox(mask, tempNodeBox)) {
             hasVisibleRegion = true;
           }
         } else {
           // Invisible region (opacity <= 0): node should be masked out if it is fully contained.
-          if (mask.bbox.containsBox(tempNodeBox)) {
+          if (maskRegionContainsBox(mask, tempNodeBox)) {
             containedInInvisibleRegion = true;
           }
         }
@@ -286,20 +287,17 @@ export class Potree implements IPotree {
       pointCloud.updateVisibleBounds();
       pointCloud.updateBoundingBoxes();
 
-      if (this.masks.needsUpdate) {
-        pointCloud.material.maskCuboidCount = this.masks.cuboids.length;
-        pointCloud.material.opacityOutOfMasks = this.masks.defaultOpacity;
-        pointCloud.material.masksCuboid = this.masks.cuboids.map(cuboid => ({
-          center: cuboid.center,
-          halfExtents: cuboid.halfExtents,
-          axisX: cuboid.axisX,
-          axisY: cuboid.axisY,
-          axisZ: cuboid.axisZ,
-          opacity: cuboid.opacity,
-        }));
-
-        pointCloud.material.needsUpdate = true;
+      // Binding the texture is all a mask change costs — the count, the opacities and every
+      // region's geometry live inside it, so nothing here depends on how many regions there are
+      // and the shader is never recompiled for a mask change. The one recompile per material is
+      // the first time masking is used at all, when the mask path is compiled in. Run every frame
+      // rather than only on `needsUpdate` so a point cloud that finishes loading after the mask
+      // was set still picks it up.
+      if (this.maskShaderEnabled && !pointCloud.material.useMaskTexture) {
+        pointCloud.material.maskRegionTexture = this.maskTexture;
+        pointCloud.material.useMaskTexture = true;
         pointCloud.material.updateShaders();
+        pointCloud.material.needsUpdate = true;
       }
     }
 

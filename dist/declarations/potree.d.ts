@@ -1,8 +1,9 @@
-import { Camera, Object3D, Ray, WebGLRenderer } from 'three';
+import { Camera, DataTexture, Object3D, Ray, WebGLRenderer } from 'three';
 import { GetUrlFn } from './loading';
 import { PointCloudOctree } from './point-cloud-octree';
 import { PickParams } from './point-cloud-octree-picker';
-import { IPointCloudTreeNode, IPotree, IVisibilityUpdateResult, MaskConfig, PCOGeometry, PickPoint } from './types';
+import { MaskConfig } from './mask/types';
+import { IPointCloudTreeNode, IPotree, IVisibilityUpdateResult, PCOGeometry, PickPoint } from './types';
 import { LRU } from './utils/lru';
 export declare class QueueItem {
     pointCloudIndex: number;
@@ -28,6 +29,22 @@ export declare class Potree implements IPotree {
     lru: LRU;
     private readonly loadGeometry;
     private masks;
+    /**
+     * The packed mask texture both this library's point cloud shader and any other renderer in the
+     * scene sample. Allocated once at a fixed size and only ever rewritten — see `mask/constants`.
+     */
+    private readonly maskTexture;
+    /**
+     * Whether the mask path has been compiled into the point cloud shader. Latched on the first
+     * `setMaskConfig` and never unlatched: a lasso mask changes on every click, and a shader
+     * recompile per vertex — which a region-count `#define` would force — is not viable.
+     */
+    private maskShaderEnabled;
+    /**
+     * The packed mask texture, for another material in the scene to mask by exactly the same data.
+     * It is the live texture, not a copy: bind it once and every later mask change reaches it.
+     */
+    get maskDataTexture(): DataTexture;
     constructor(version?: PotreeVersion);
     /**
      * Load a point cloud from a given URL. The URL is the location of the potree metadata (e.g. `metadata.json`).
@@ -41,16 +58,25 @@ export declare class Potree implements IPotree {
      */
     loadPointCloud(url: string, getUrl: GetUrlFn, xhrRequest?: (input: RequestInfo, init?: RequestInit) => Promise<Response>): Promise<PointCloudOctree>;
     /**
-     * Set mask regions for visibility filtering and opacity control.
+     * Set the mask the point clouds render through.
      *
-     * @param config Mask configuration with regions and default opacity
-     * @param scene Optional Three.js scene to add debug helpers for mask regions. If not provided, no helpers will be added.
+     * Regions come in their natural form — an oriented box, or a polygon prism given as a closed
+     * coplanar outline extruded infinitely both ways along its plane normal. This library fits each
+     * prism's plane basis, flattens it, and packs every region into one texture the shader samples.
+     *
+     * **Order is significant.** Regions paint in list order and a later region overwrites an earlier
+     * one where they overlap, so an outline can carve a hole out of an earlier one and a further
+     * outline can put part of that hole back.
+     *
+     * @param config The mask's regions (in order) and the opacity for points inside none of them.
+     * @param scene Optional scene to add debug AABB helpers to. Prisms have no finite AABB, so only
+     *   boxes get one.
      *
      * @example
      * ```typescript
-     * // Show only inside a region (defaultOpacity=0, region.opacity=1)
+     * // Show only inside a box (defaultOpacity=0, region.opacity=1)
      * potree.setMaskConfig({
-     *   cuboids: [
+     *   regions: [
      *     {
      *       id: 'region-1',
      *       center: new Vector3(0, 0, 10),
@@ -62,18 +88,19 @@ export declare class Potree implements IPotree {
      *   defaultOpacity: 0.0 // Outside is hidden
      * });
      *
-     * // Hide inside a region (defaultOpacity=1, region.opacity=0)
+     * // Keep an outlined region, then cut a hole out of it
      * potree.setMaskConfig({
-     *   cuboids: [
+     *   regions: [
+     *     { id: 'keep', kind: MaskRegionKind.Prism, positions: outline, opacity: 1.0 },
      *     {
-     *       id: 'region-2',
-     *       center: new Vector3(0, 0, 5),
-     *       rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity rotation
-     *       extent: new Vector3(10, 10, 10),
-     *       opacity: 0.0, // Hidden inside
-     *     }
+     *       id: 'hole',
+     *       kind: MaskRegionKind.Prism,
+     *       positions: hole,
+     *       operation: MaskOperation.Exclude,
+     *       opacity: 1.0,
+     *     },
      *   ],
-     *   defaultOpacity: 1.0 // Outside is visible
+     *   defaultOpacity: 0.0
      * });
      * ```
      */

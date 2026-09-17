@@ -3,9 +3,17 @@ import { GetUrlFn, XhrRequest } from './loading/types';
 import { OctreeGeometry } from './loading2/octree-geometry';
 import { PointCloudOctree } from './point-cloud-octree';
 import { PointCloudOctreeGeometry } from './point-cloud-octree-geometry';
+import { PreparedMaskRegion } from './mask/types';
 import { LRU } from './utils/lru';
 
-export interface MaskRegion {
+/**
+ * A region of the deprecated `mask_region_length` material path (`material.maskRegions`), which
+ * `hatsuly-app` still drives in production and which this library therefore keeps compiling.
+ *
+ * Renamed from `MaskRegion`, which now names the shape a mask is built from — see `./mask/types`.
+ * The path itself is untouched.
+ */
+export interface MaskRegionUniform {
   /** Unique identifier for the mask region */
   id: string;
   /** Model matrix representing the orientation and position of the mask region */
@@ -22,39 +30,12 @@ export interface MaskRegion {
   bbox?: Box3;
 }
 
-export interface Cuboid {
-  id: string;
-  center: Vector3;
-  rotation: number[];
-  extent: Vector3;
-  opacity: number;
-  bbox?: Box3;
-}
-
-export interface MaskCuboid {
-  id: string;
-  center: Vector3;
-  halfExtents: Vector3;
-  axisX: Vector3;
-  axisY: Vector3;
-  axisZ: Vector3;
-  opacity: number;
-  bbox: Box3;
-}
-
-export interface MaskConfig {
-  /** Array of mask regions */
-  cuboids: Cuboid[];
-  /** Default opacity for points not inside any mask region */
-  defaultOpacity: number;
-}
-
 export interface InternalMaskConfig {
-  /** Array of mask regions */
-  cuboids: Required<MaskCuboid>[];
+  /** The mask's regions, prepared and in order. */
+  regions: PreparedMaskRegion[];
   /** Default opacity for points not inside any mask region */
   defaultOpacity: number;
-  /** Flag to indicate if the mask config has changed and needs to be re-applied to the point clouds */
+  /** Flag to indicate if the mask config has changed and needs to be re-packed into the texture */
   needsUpdate: boolean;
 }
 
