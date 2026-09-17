@@ -33,8 +33,6 @@ export interface InternalMaskConfig {
     regions: PreparedMaskRegion[];
     /** Default opacity for points not inside any mask region */
     defaultOpacity: number;
-    /** Flag to indicate if the mask config has changed and needs to be re-packed into the texture */
-    needsUpdate: boolean;
 }
 export interface IPointCloudTreeNode {
     id: number;

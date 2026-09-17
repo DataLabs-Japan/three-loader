@@ -47,7 +47,9 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
 
     const isPrism = prepared.kind === MaskRegionKind.Prism;
     const vertexCount = isPrism ? prepared.vertexCount : 0;
-    if (isPrism && totalVertices + vertexCount > MASK_MAX_TOTAL_VERTICES) continue;
+    // Stop rather than skip: order is the mask's meaning, and stepping over one region to fit a
+    // later, smaller one silently produces a differently-ordered mask.
+    if (isPrism && totalVertices + vertexCount > MASK_MAX_TOTAL_VERTICES) break;
 
     const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
     if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS) break;

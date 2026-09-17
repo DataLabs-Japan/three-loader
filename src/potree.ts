@@ -83,7 +83,6 @@ export class Potree implements IPotree {
   private masks: InternalMaskConfig = {
     regions: [],
     defaultOpacity: 1.0,
-    needsUpdate: false,
   };
 
   /**
@@ -185,7 +184,6 @@ export class Potree implements IPotree {
     this.masks = {
       regions: packed.regions,
       defaultOpacity: config.defaultOpacity,
-      needsUpdate: true,
     };
     this.maskShaderEnabled = true;
 
@@ -291,8 +289,8 @@ export class Potree implements IPotree {
       // region's geometry live inside it, so nothing here depends on how many regions there are
       // and the shader is never recompiled for a mask change. The one recompile per material is
       // the first time masking is used at all, when the mask path is compiled in. Run every frame
-      // rather than only on `needsUpdate` so a point cloud that finishes loading after the mask
-      // was set still picks it up.
+      // Checked every frame so a point cloud that finishes loading after the mask was set still
+      // picks it up; the texture is the same object throughout, so this costs one comparison.
       if (this.maskShaderEnabled && !pointCloud.material.useMaskTexture) {
         pointCloud.material.maskRegionTexture = this.maskTexture;
         pointCloud.material.useMaskTexture = true;
@@ -301,7 +299,6 @@ export class Potree implements IPotree {
       }
     }
 
-    this.masks.needsUpdate = false;
     this.lru.freeMemory();
 
     return result;

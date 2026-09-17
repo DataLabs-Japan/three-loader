@@ -410,6 +410,13 @@ bool maskPrismContains(float base, vec3 worldPos) {
   return inside;
 }
 
+/* How many regions the mask holds. Zero means nothing is masked at all — which is not the same as
+   a mask that hides everything, and a consumer that treats the two alike blanks its own scene the
+   moment an area has no mask. */
+float maskRegionCount() {
+  return maskTexel(0.0).x;
+}
+
 /* Walk the regions in order.
 
    Within a group — one mask — the last match wins, so an outline can carve a hole out of an
@@ -494,8 +501,10 @@ function packMaskRegions(regions, defaultOpacity) {
             continue;
         const isPrism = prepared.kind === MaskRegionKind.Prism;
         const vertexCount = isPrism ? prepared.vertexCount : 0;
+        // Stop rather than skip: order is the mask's meaning, and stepping over one region to fit a
+        // later, smaller one silently produces a differently-ordered mask.
         if (isPrism && totalVertices + vertexCount > MASK_MAX_TOTAL_VERTICES)
-            continue;
+            break;
         const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
         if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS)
             break;
@@ -4820,7 +4829,6 @@ class Potree {
         this.masks = {
             regions: [],
             defaultOpacity: 1.0,
-            needsUpdate: false,
         };
         /**
          * The packed mask texture both this library's point cloud shader and any other renderer in the
@@ -4991,7 +4999,6 @@ class Potree {
         this.masks = {
             regions: packed.regions,
             defaultOpacity: config.defaultOpacity,
-            needsUpdate: true,
         };
         this.maskShaderEnabled = true;
         // For debugging: visualize the box masks in the scene. A prism is infinite along its normal,
@@ -5039,8 +5046,8 @@ class Potree {
             // region's geometry live inside it, so nothing here depends on how many regions there are
             // and the shader is never recompiled for a mask change. The one recompile per material is
             // the first time masking is used at all, when the mask path is compiled in. Run every frame
-            // rather than only on `needsUpdate` so a point cloud that finishes loading after the mask
-            // was set still picks it up.
+            // Checked every frame so a point cloud that finishes loading after the mask was set still
+            // picks it up; the texture is the same object throughout, so this costs one comparison.
             if (this.maskShaderEnabled && !pointCloud.material.useMaskTexture) {
                 pointCloud.material.maskRegionTexture = this.maskTexture;
                 pointCloud.material.useMaskTexture = true;
@@ -5048,7 +5055,6 @@ class Potree {
                 pointCloud.material.needsUpdate = true;
             }
         }
-        this.masks.needsUpdate = false;
         this.lru.freeMemory();
         return result;
     }

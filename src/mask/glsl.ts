@@ -104,6 +104,13 @@ bool maskPrismContains(float base, vec3 worldPos) {
   return inside;
 }
 
+/* How many regions the mask holds. Zero means nothing is masked at all — which is not the same as
+   a mask that hides everything, and a consumer that treats the two alike blanks its own scene the
+   moment an area has no mask. */
+float maskRegionCount() {
+  return maskTexel(0.0).x;
+}
+
 /* Walk the regions in order.
 
    Within a group — one mask — the last match wins, so an outline can carve a hole out of an
