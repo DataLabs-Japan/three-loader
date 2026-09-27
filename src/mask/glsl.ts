@@ -5,6 +5,8 @@ import {
   MASK_MAX_PRISM_VERTICES,
   MASK_MAX_REGIONS,
   MASK_PRISM_HEADER_TEXELS,
+  MASK_REJECT_OFFSET,
+  MASK_REJECT_TEXELS,
   MASK_TEXTURE_HEIGHT,
   MASK_TEXTURE_WIDTH,
 } from './constants';
@@ -41,6 +43,8 @@ uniform sampler2D uMaskRegionTex;
 #define MASK_MAX_REGIONS ${MASK_MAX_REGIONS}
 #define MASK_MAX_PRISM_VERTICES ${MASK_MAX_PRISM_VERTICES}
 #define MASK_PRISM_HEADER_TEXELS ${f(MASK_PRISM_HEADER_TEXELS)}
+#define MASK_REJECT_OFFSET ${f(MASK_REJECT_OFFSET)}
+#define MASK_REJECT_TEXELS ${f(MASK_REJECT_TEXELS)}
 #define MASK_FLAG_PRISM ${f(MASK_FLAG_PRISM)}
 #define MASK_FLAG_EXCLUDE ${f(MASK_FLAG_EXCLUDE)}
 
@@ -140,23 +144,47 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 
   for (int i = 0; i < MASK_MAX_REGIONS; i++) {
     if (float(i) >= regionCount) break;
+
+    /* The reject pair, at an address this loop can compute on its own. Nearly every fragment is
+       outside nearly every region, and for those two fetches is the whole cost: the directory and
+       the region's geometry are read only where they can change the answer. */
+    float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
+    vec4 bound = maskTexel(rejectBase);
+    vec4 axis = maskTexel(rejectBase + 1.0);
+
+    float groupAndFlags = axis.w;
+    float entryGroup = floor(groupAndFlags * 0.25);
+    float flags = groupAndFlags - entryGroup * 4.0;
+
+    /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
+       the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
+    vec3 offset = worldPos - bound.xyz;
+    vec3 radial = offset - dot(offset, axis.xyz) * axis.xyz;
+    bool nearby = dot(radial, radial) <= bound.w * bound.w;
+
+    bool startsGroup = entryGroup != group;
+    if (!startsGroup && !nearby) continue;
+
+    // Past here the region can change the answer, so its directory slot is worth reading.
     vec4 entry = maskTexel(MASK_HEADER_TEXELS + float(i));
 
-    if (entry.w != group) {
+    if (startsGroup) {
       if (groupInside) {
         inside = true;
         result = groupOpacity;
       }
-      group = entry.w;
+      group = entryGroup;
       // This entry is the group's first, so its operation is the seed.
-      groupInside = entry.x >= MASK_FLAG_EXCLUDE;
+      groupInside = flags >= MASK_FLAG_EXCLUDE;
       groupOpacity = entry.z;
     }
 
-    bool isPrism = mod(entry.x, 2.0) >= 0.5;
+    if (!nearby) continue;
+
+    bool isPrism = mod(flags, 2.0) >= 0.5;
     bool hit = isPrism ? maskPrismContains(entry.y, worldPos) : maskCuboidContains(entry.y, worldPos);
     if (hit) {
-      if (entry.x >= MASK_FLAG_EXCLUDE) {
+      if (flags >= MASK_FLAG_EXCLUDE) {
         groupInside = false;
       } else {
         groupInside = true;

@@ -10,6 +10,7 @@ import {
   fitPrismBasis,
   isInsideMaskGroup,
   isInsideMaskRegion,
+  maskRejectBound,
   prepareMaskRegion,
 } from '../geometry';
 import { packMaskRegions } from '../packing';
@@ -258,5 +259,73 @@ describe('packing', () => {
         .addScaledVector(basis!.w, basis!.flat[index].y);
       expect(rebuilt.distanceTo(vertex)).toBeLessThan(1e-6);
     });
+  });
+});
+
+/**
+ * The reject bound is what the shader tests a fragment against before it reads anything else about
+ * a region, so a bound that is too small is a hole in the mask that no containment test can catch.
+ * Every case's inside points are checked against it here, the same way the shader checks them.
+ */
+describe('mask reject bound', () => {
+  /** The shader's test, in TypeScript: inside the cylinder of `radius` about the axis line. */
+  const isNearby = (bound: ReturnType<typeof maskRejectBound>, point: Vector3): boolean => {
+    const offset = point.clone().sub(bound.centre);
+    const radial = offset.clone().addScaledVector(bound.axis, -offset.dot(bound.axis));
+    return radial.lengthSq() <= bound.radius * bound.radius + 1e-9;
+  };
+
+  for (const testCase of CONTAINMENT_CASES) {
+    const prepared = prepareMaskRegion(testCase.region, 0);
+    if (!prepared) continue;
+    const bound = maskRejectBound(prepared);
+
+    it(`${testCase.name}: holds every point inside the region`, () => {
+      for (const point of testCase.inside) {
+        expect(isNearby(bound, point), `${point.toArray().join(', ')} was rejected`).toBe(true);
+      }
+    });
+  }
+
+  it('holds a prism at any distance along its normal, which is where it runs to infinity', () => {
+    const region = {
+      id: 'deep',
+      kind: MaskRegionKind.Prism as const,
+      positions: [new Vector3(0, 0, 0), new Vector3(4, 0, 0), new Vector3(4, 4, 0), new Vector3(0, 4, 0)],
+      opacity: 1,
+    };
+    const prepared = prepareMaskRegion(region, 0)!;
+    const bound = maskRejectBound(prepared);
+
+    // Straight up the normal from the middle of the outline: inside the prism at any height.
+    for (const height of [0, 10, -10, 1000]) {
+      expect(isNearby(bound, new Vector3(2, 2, height))).toBe(true);
+    }
+    // Far to the side, well past the outline: the bound has to let this one go.
+    expect(isNearby(bound, new Vector3(100, 2, 0))).toBe(false);
+  });
+
+  it('bounds a box by a sphere, with no axis to project onto', () => {
+    const region = {
+      id: 'box',
+      kind: MaskRegionKind.Cuboid as const,
+      center: new Vector3(1, 2, 3),
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      extent: new Vector3(2, 2, 2),
+      opacity: 1,
+    };
+    const prepared = prepareMaskRegion(region, 0)!;
+    const bound = maskRejectBound(prepared);
+
+    expect(bound.axis.lengthSq()).toBe(0);
+    // Every corner of the box, the farthest points it has.
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          expect(isNearby(bound, new Vector3(1 + sx, 2 + sy, 3 + sz))).toBe(true);
+        }
+      }
+    }
+    expect(isNearby(bound, new Vector3(20, 2, 3))).toBe(false);
   });
 });

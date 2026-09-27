@@ -43,6 +43,22 @@ export declare function isInsideMaskRegion(point: Vector3, region: PreparedMaskR
  * @param regions One mask's regions, in order. An empty list keeps nothing.
  */
 export declare function isInsideMaskGroup(point: Vector3, regions: PreparedMaskRegion[]): boolean;
+/**
+ * A conservative world bound for a region: the cylinder of `radius` around the line through
+ * `centre` along `axis`, or — when `axis` is zero — the sphere of `radius` around `centre`.
+ *
+ * This is what a fragment outside everything is tested against, so it is deliberately the cheapest
+ * shape that can hold the region rather than the tightest. A prism runs to infinity along its
+ * normal and has no finite bound at all in that direction, which is why the shape is a cylinder;
+ * a box takes the sphere, the same arithmetic with a zero axis.
+ *
+ * @param region The prepared region to bound.
+ */
+export declare function maskRejectBound(region: PreparedMaskRegion): {
+    centre: Vector3;
+    radius: number;
+    axis: Vector3;
+};
 /** Whether a world-space box could contain any point of the region (conservative: may say yes). */
 export declare function maskRegionIntersectsBox(region: PreparedMaskRegion, box: Box3): boolean;
 /**

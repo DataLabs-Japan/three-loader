@@ -146,20 +146,6 @@ void main() {
 		}
 	#endif
 
-	#if defined mask_texture
-		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
-		// the mask's outside-everything default. Both come out of the texture, so nothing here
-		// depends on how many regions there are.
-		bool isFragmentInsideMask = false;
-		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
-
-		// discard fragment if fragment's opacity <= 0.0
-		if (overrideOpacity <= 0.0) {
-			discard;
-			return;
-		}
-	#endif
-
 	vec3 color = vColor;
 	float depth = gl_FragCoord.z;
 
@@ -194,6 +180,24 @@ void main() {
 		float sDepth = texture2D(depthMap, uv).r;
 		if(vLinearDepth > sDepth + vRadius + blendDepthSupplement){
 			discard;
+		}
+	#endif
+
+	/* After the cheap discards above, not before them. A square point sprite drawn as a circle
+	   throws away about a fifth of its fragments, and the clipped and depth-rejected ones go the
+	   same way; evaluating the mask first means paying its texture fetches for every one of them.
+	   Nothing between here and there reads `overrideOpacity`. */
+	#if defined mask_texture
+		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
+		// the mask's outside-everything default. Both come out of the texture, so nothing here
+		// depends on how many regions there are.
+		bool isFragmentInsideMask = false;
+		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
+
+		// discard fragment if fragment's opacity <= 0.0
+		if (overrideOpacity <= 0.0) {
+			discard;
+			return;
 		}
 	#endif
 

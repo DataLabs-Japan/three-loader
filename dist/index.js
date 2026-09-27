@@ -31,8 +31,30 @@ const MASK_HEADER_TEXELS = 1;
  * how many regions are packed.
  */
 const MASK_MAX_REGIONS = 256;
+/**
+ * Texels per region in the reject block: `[centre.xyz, radius]` and `[axis.xyz, groupAndFlags]`.
+ *
+ * A conservative world bound the shader tests before reading anything else about a region. It is
+ * what a fragment outside every region pays, and that is nearly every fragment of nearly every
+ * frame: the point cloud fills the viewport, and a mask covers a part of it.
+ *
+ * Its own block, addressed as `MASK_REJECT_OFFSET + index * MASK_REJECT_TEXELS`, so the address
+ * is known without first reading the directory — the read that used to make this a chain of
+ * dependent fetches five deep per region.
+ *
+ * `axis` is the prism's plane normal, and the bound is the cylinder of `radius` around the line
+ * through `centre` along it — the tightest simple shape for a solid that runs to infinity both
+ * ways. For a cuboid `axis` is zero, which degenerates the same arithmetic to a bounding sphere.
+ *
+ * `groupAndFlags` is `group * 4 + flags`, exact in a float for every group the directory can
+ * hold: it lets the shader see a region's group and kind without the directory texel, so a region
+ * the fragment misses costs nothing more unless it is the one that seeds its group.
+ */
+const MASK_REJECT_TEXELS = 2;
+/** First texel of the reject block. */
+const MASK_REJECT_OFFSET = MASK_HEADER_TEXELS + MASK_MAX_REGIONS;
 /** First texel of the payload area, which the directory's offsets point into. */
-const MASK_PAYLOAD_OFFSET = MASK_HEADER_TEXELS + MASK_MAX_REGIONS;
+const MASK_PAYLOAD_OFFSET = MASK_REJECT_OFFSET + MASK_MAX_REGIONS * MASK_REJECT_TEXELS;
 /** Cuboid payload: the inverse model matrix (4 texels) then its local `min` and `max`. */
 const MASK_CUBOID_PAYLOAD_TEXELS = 6;
 /**
@@ -231,6 +253,47 @@ function isInsideMaskGroup(point, regions) {
     }
     return inside;
 }
+/**
+ * A conservative world bound for a region: the cylinder of `radius` around the line through
+ * `centre` along `axis`, or — when `axis` is zero — the sphere of `radius` around `centre`.
+ *
+ * This is what a fragment outside everything is tested against, so it is deliberately the cheapest
+ * shape that can hold the region rather than the tightest. A prism runs to infinity along its
+ * normal and has no finite bound at all in that direction, which is why the shape is a cylinder;
+ * a box takes the sphere, the same arithmetic with a zero axis.
+ *
+ * @param region The prepared region to bound.
+ */
+function maskRejectBound(region) {
+    if (region.kind === MaskRegionKind.Cuboid) {
+        // The bounding sphere of an oriented box is the same whatever its rotation.
+        return {
+            centre: region.center.clone(),
+            radius: region.halfExtents.length(),
+            axis: new Vector3(0, 0, 0),
+        };
+    }
+    const { basis } = region;
+    const { minU, minW, maxU, maxW } = basis.bounds2D;
+    const centreU = (minU + maxU) * 0.5;
+    const centreW = (minW + maxW) * 0.5;
+    let radiusSq = 0;
+    for (const vertex of basis.flat) {
+        const offsetU = vertex.x - centreU;
+        const offsetW = vertex.y - centreW;
+        const distanceSq = offsetU * offsetU + offsetW * offsetW;
+        if (distanceSq > radiusSq)
+            radiusSq = distanceSq;
+    }
+    return {
+        centre: basis.origin
+            .clone()
+            .addScaledVector(basis.u, centreU)
+            .addScaledVector(basis.w, centreW),
+        radius: Math.sqrt(radiusSq),
+        axis: basis.normal.clone(),
+    };
+}
 /** Whether a world-space box could contain any point of the region (conservative: may say yes). */
 function maskRegionIntersectsBox(region, box) {
     if (region.kind === MaskRegionKind.Cuboid)
@@ -370,6 +433,8 @@ uniform sampler2D uMaskRegionTex;
 #define MASK_MAX_REGIONS ${MASK_MAX_REGIONS}
 #define MASK_MAX_PRISM_VERTICES ${MASK_MAX_PRISM_VERTICES}
 #define MASK_PRISM_HEADER_TEXELS ${f(MASK_PRISM_HEADER_TEXELS)}
+#define MASK_REJECT_OFFSET ${f(MASK_REJECT_OFFSET)}
+#define MASK_REJECT_TEXELS ${f(MASK_REJECT_TEXELS)}
 #define MASK_FLAG_PRISM ${f(MASK_FLAG_PRISM)}
 #define MASK_FLAG_EXCLUDE ${f(MASK_FLAG_EXCLUDE)}
 
@@ -469,23 +534,47 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 
   for (int i = 0; i < MASK_MAX_REGIONS; i++) {
     if (float(i) >= regionCount) break;
+
+    /* The reject pair, at an address this loop can compute on its own. Nearly every fragment is
+       outside nearly every region, and for those two fetches is the whole cost: the directory and
+       the region's geometry are read only where they can change the answer. */
+    float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
+    vec4 bound = maskTexel(rejectBase);
+    vec4 axis = maskTexel(rejectBase + 1.0);
+
+    float groupAndFlags = axis.w;
+    float entryGroup = floor(groupAndFlags * 0.25);
+    float flags = groupAndFlags - entryGroup * 4.0;
+
+    /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
+       the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
+    vec3 offset = worldPos - bound.xyz;
+    vec3 radial = offset - dot(offset, axis.xyz) * axis.xyz;
+    bool nearby = dot(radial, radial) <= bound.w * bound.w;
+
+    bool startsGroup = entryGroup != group;
+    if (!startsGroup && !nearby) continue;
+
+    // Past here the region can change the answer, so its directory slot is worth reading.
     vec4 entry = maskTexel(MASK_HEADER_TEXELS + float(i));
 
-    if (entry.w != group) {
+    if (startsGroup) {
       if (groupInside) {
         inside = true;
         result = groupOpacity;
       }
-      group = entry.w;
+      group = entryGroup;
       // This entry is the group's first, so its operation is the seed.
-      groupInside = entry.x >= MASK_FLAG_EXCLUDE;
+      groupInside = flags >= MASK_FLAG_EXCLUDE;
       groupOpacity = entry.z;
     }
 
-    bool isPrism = mod(entry.x, 2.0) >= 0.5;
+    if (!nearby) continue;
+
+    bool isPrism = mod(flags, 2.0) >= 0.5;
     bool hit = isPrism ? maskPrismContains(entry.y, worldPos) : maskCuboidContains(entry.y, worldPos);
     if (hit) {
-      if (entry.x >= MASK_FLAG_EXCLUDE) {
+      if (flags >= MASK_FLAG_EXCLUDE) {
         groupInside = false;
       } else {
         groupInside = true;
@@ -539,14 +628,20 @@ function packMaskRegions(regions, defaultOpacity) {
         const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
         if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS)
             break;
+        const flags = (isPrism ? MASK_FLAG_PRISM : 0) +
+            (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
         // Directory slot: [flags, payloadOffset, opacity, group].
         const slot = (MASK_HEADER_TEXELS + packed.length) * 4;
-        data[slot + 0] =
-            (isPrism ? MASK_FLAG_PRISM : 0) +
-                (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
+        data[slot + 0] = flags;
         data[slot + 1] = payloadCursor;
         data[slot + 2] = prepared.opacity;
         data[slot + 3] = prepared.group;
+        // Reject slot: [centre.xyz, radius], [axis.xyz, group * 4 + flags]. Read first and, for a
+        // region the fragment is nowhere near, read instead of everything else.
+        const reject = (MASK_REJECT_OFFSET + packed.length * MASK_REJECT_TEXELS) * 4;
+        const bound = maskRejectBound(prepared);
+        data.set([bound.centre.x, bound.centre.y, bound.centre.z, bound.radius], reject);
+        data.set([bound.axis.x, bound.axis.y, bound.axis.z, prepared.group * 4 + flags], reject + 4);
         const payload = payloadCursor * 4;
         if (prepared.kind === MaskRegionKind.Cuboid) {
             data.set(cuboidInverseModelMatrix(prepared).toArray(), payload);
@@ -1121,20 +1216,6 @@ void main() {
 		}
 	#endif
 
-	#if defined mask_texture
-		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
-		// the mask's outside-everything default. Both come out of the texture, so nothing here
-		// depends on how many regions there are.
-		bool isFragmentInsideMask = false;
-		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
-
-		// discard fragment if fragment's opacity <= 0.0
-		if (overrideOpacity <= 0.0) {
-			discard;
-			return;
-		}
-	#endif
-
 	vec3 color = vColor;
 	float depth = gl_FragCoord.z;
 
@@ -1169,6 +1250,24 @@ void main() {
 		float sDepth = texture2D(depthMap, uv).r;
 		if(vLinearDepth > sDepth + vRadius + blendDepthSupplement){
 			discard;
+		}
+	#endif
+
+	/* After the cheap discards above, not before them. A square point sprite drawn as a circle
+	   throws away about a fifth of its fragments, and the clipped and depth-rejected ones go the
+	   same way; evaluating the mask first means paying its texture fetches for every one of them.
+	   Nothing between here and there reads \`overrideOpacity\`. */
+	#if defined mask_texture
+		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
+		// the mask's outside-everything default. Both come out of the texture, so nothing here
+		// depends on how many regions there are.
+		bool isFragmentInsideMask = false;
+		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
+
+		// discard fragment if fragment's opacity <= 0.0
+		if (overrideOpacity <= 0.0) {
+			discard;
+			return;
 		}
 	#endif
 
@@ -5262,5 +5361,5 @@ class Potree {
     }
 }
 
-export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, isInsideFlatPolygon, isInsideMaskGroup, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
+export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_REJECT_OFFSET, MASK_REJECT_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, isInsideFlatPolygon, isInsideMaskGroup, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, maskRejectBound, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
 //# sourceMappingURL=index.js.map

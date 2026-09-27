@@ -26,6 +26,28 @@ export declare const MASK_HEADER_TEXELS = 1;
  * how many regions are packed.
  */
 export declare const MASK_MAX_REGIONS = 256;
+/**
+ * Texels per region in the reject block: `[centre.xyz, radius]` and `[axis.xyz, groupAndFlags]`.
+ *
+ * A conservative world bound the shader tests before reading anything else about a region. It is
+ * what a fragment outside every region pays, and that is nearly every fragment of nearly every
+ * frame: the point cloud fills the viewport, and a mask covers a part of it.
+ *
+ * Its own block, addressed as `MASK_REJECT_OFFSET + index * MASK_REJECT_TEXELS`, so the address
+ * is known without first reading the directory — the read that used to make this a chain of
+ * dependent fetches five deep per region.
+ *
+ * `axis` is the prism's plane normal, and the bound is the cylinder of `radius` around the line
+ * through `centre` along it — the tightest simple shape for a solid that runs to infinity both
+ * ways. For a cuboid `axis` is zero, which degenerates the same arithmetic to a bounding sphere.
+ *
+ * `groupAndFlags` is `group * 4 + flags`, exact in a float for every group the directory can
+ * hold: it lets the shader see a region's group and kind without the directory texel, so a region
+ * the fragment misses costs nothing more unless it is the one that seeds its group.
+ */
+export declare const MASK_REJECT_TEXELS = 2;
+/** First texel of the reject block. */
+export declare const MASK_REJECT_OFFSET: number;
 /** First texel of the payload area, which the directory's offsets point into. */
 export declare const MASK_PAYLOAD_OFFSET: number;
 /** Cuboid payload: the inverse model matrix (4 texels) then its local `min` and `max`. */

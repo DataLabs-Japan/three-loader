@@ -176,6 +176,54 @@ export function isInsideMaskGroup(point: Vector3, regions: PreparedMaskRegion[])
   return inside;
 }
 
+/**
+ * A conservative world bound for a region: the cylinder of `radius` around the line through
+ * `centre` along `axis`, or — when `axis` is zero — the sphere of `radius` around `centre`.
+ *
+ * This is what a fragment outside everything is tested against, so it is deliberately the cheapest
+ * shape that can hold the region rather than the tightest. A prism runs to infinity along its
+ * normal and has no finite bound at all in that direction, which is why the shape is a cylinder;
+ * a box takes the sphere, the same arithmetic with a zero axis.
+ *
+ * @param region The prepared region to bound.
+ */
+export function maskRejectBound(region: PreparedMaskRegion): {
+  centre: Vector3;
+  radius: number;
+  axis: Vector3;
+} {
+  if (region.kind === MaskRegionKind.Cuboid) {
+    // The bounding sphere of an oriented box is the same whatever its rotation.
+    return {
+      centre: region.center.clone(),
+      radius: region.halfExtents.length(),
+      axis: new Vector3(0, 0, 0),
+    };
+  }
+
+  const { basis } = region;
+  const { minU, minW, maxU, maxW } = basis.bounds2D;
+  const centreU = (minU + maxU) * 0.5;
+  const centreW = (minW + maxW) * 0.5;
+
+  let radiusSq = 0;
+  for (const vertex of basis.flat) {
+    const offsetU = vertex.x - centreU;
+    const offsetW = vertex.y - centreW;
+    const distanceSq = offsetU * offsetU + offsetW * offsetW;
+    if (distanceSq > radiusSq) radiusSq = distanceSq;
+  }
+
+  return {
+    centre: basis.origin
+      .clone()
+      .addScaledVector(basis.u, centreU)
+      .addScaledVector(basis.w, centreW),
+    radius: Math.sqrt(radiusSq),
+    axis: basis.normal.clone(),
+  };
+}
+
 /** Whether a world-space box could contain any point of the region (conservative: may say yes). */
 export function maskRegionIntersectsBox(region: PreparedMaskRegion, box: Box3): boolean {
   if (region.kind === MaskRegionKind.Cuboid) return box.intersectsBox(region.bbox);

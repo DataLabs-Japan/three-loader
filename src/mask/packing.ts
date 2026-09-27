@@ -8,12 +8,14 @@ import {
   MASK_MAX_TOTAL_VERTICES,
   MASK_PAYLOAD_OFFSET,
   MASK_PRISM_HEADER_TEXELS,
+  MASK_REJECT_OFFSET,
+  MASK_REJECT_TEXELS,
   MASK_TEXTURE_HEIGHT,
   MASK_TEXTURE_TEXELS,
   MASK_TEXTURE_WIDTH,
   prismPayloadTexels,
 } from './constants';
-import { cuboidInverseModelMatrix, prepareMaskRegion } from './geometry';
+import { cuboidInverseModelMatrix, maskRejectBound, prepareMaskRegion } from './geometry';
 import { MaskOperation, MaskRegion, MaskRegionKind, PackedMask, PreparedMaskRegion } from './types';
 
 /**
@@ -54,14 +56,23 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
     const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
     if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS) break;
 
-    // Directory slot: [flags, payloadOffset, opacity, group].
-    const slot = (MASK_HEADER_TEXELS + packed.length) * 4;
-    data[slot + 0] =
+    const flags =
       (isPrism ? MASK_FLAG_PRISM : 0) +
       (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
+
+    // Directory slot: [flags, payloadOffset, opacity, group].
+    const slot = (MASK_HEADER_TEXELS + packed.length) * 4;
+    data[slot + 0] = flags;
     data[slot + 1] = payloadCursor;
     data[slot + 2] = prepared.opacity;
     data[slot + 3] = prepared.group;
+
+    // Reject slot: [centre.xyz, radius], [axis.xyz, group * 4 + flags]. Read first and, for a
+    // region the fragment is nowhere near, read instead of everything else.
+    const reject = (MASK_REJECT_OFFSET + packed.length * MASK_REJECT_TEXELS) * 4;
+    const bound = maskRejectBound(prepared);
+    data.set([bound.centre.x, bound.centre.y, bound.centre.z, bound.radius], reject);
+    data.set([bound.axis.x, bound.axis.y, bound.axis.z, prepared.group * 4 + flags], reject + 4);
 
     const payload = payloadCursor * 4;
     if (prepared.kind === MaskRegionKind.Cuboid) {
