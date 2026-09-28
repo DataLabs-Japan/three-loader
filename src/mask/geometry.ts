@@ -162,6 +162,10 @@ export function isInsideMaskRegion(point: Vector3, region: PreparedMaskRegion): 
  * everything and shrinks ("hide what I outlined"). Seeding empty regardless would answer "nothing
  * is kept" for every mask that opens with an exclude.
  *
+ * Takes **one** mask's regions. A list holding several masks — anything from `prepareMaskRegion`
+ * over regions with differing `group` values — is not that, and painting it as one ordered mask
+ * gives an answer the shader does not: use {@link isInsideMask}, which partitions first.
+ *
  * @param point The world point to test.
  * @param regions One mask's regions, in order. An empty list keeps nothing.
  */
@@ -175,6 +179,68 @@ export function isInsideMaskGroup(point: Vector3, regions: PreparedMaskRegion[])
   }
   return inside;
 }
+
+/**
+ * Whether the mask as a whole keeps a world point.
+ *
+ * The CPU counterpart of `maskEvaluate`, in full: regions are grouped by `group` — each group is
+ * one mask, ordered within itself — and the groups are **unioned**. A point one mask keeps is kept
+ * however many others do not, which is what stops one mask's `exclude` erasing what another kept.
+ *
+ * This is the one to call on the output of `prepareMaskRegion`, where `group` defaults to the
+ * region's index and every region is therefore its own mask.
+ *
+ * @param point The world point to test.
+ * @param regions Every region of the mask, in order. Regions of one group need not be adjacent.
+ */
+export function isInsideMask(point: Vector3, regions: PreparedMaskRegion[]): boolean {
+  const groups = new Map<number, PreparedMaskRegion[]>();
+  for (const region of regions) {
+    const existing = groups.get(region.group);
+    if (existing) existing.push(region);
+    else groups.set(region.group, [region]);
+  }
+
+  for (const group of groups.values()) {
+    if (isInsideMaskGroup(point, group)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether any mask in the list is seeded by an `exclude`.
+ *
+ * Such a mask keeps everything its regions do not cover, so "outside every region" stops meaning
+ * "not masked" and nothing can be culled on that basis. Any consumer that culls by intersection —
+ * octree nodes here, mesh tiles elsewhere — has to ask this first, or it will cull away exactly
+ * the part such a mask keeps.
+ *
+ * @param regions Every prepared region, in order.
+ */
+export function hasExcludeSeededGroup(regions: PreparedMaskRegion[]): boolean {
+  const seen = new Set<number>();
+  for (const region of regions) {
+    if (seen.has(region.group)) continue;
+    seen.add(region.group);
+    if (region.operation === MaskOperation.Exclude) return true;
+  }
+  return false;
+}
+
+/**
+ * Widen a reject radius so a point exactly on it still passes.
+ *
+ * The radius is packed into a float32 texel and compared there, and the exact distance to the
+ * farthest vertex — a box corner, a vertex of an outline — is not generally representable. Rounded
+ * down by a single unit in the last place, the bound rejects the very points it was measured from,
+ * and the region loses a hairline of its own edge.
+ *
+ * The bound only decides whether the exact test runs, so widening it costs a few more exact tests
+ * at the edge and nothing else. The relative term covers the float32 step at any scale the
+ * coordinate limit allows; the absolute one covers an outline small enough that the relative term
+ * rounds to nothing.
+ */
+const padRejectRadius = (radius: number): number => radius * (1 + 1e-5) + 1e-4;
 
 /**
  * A conservative world bound for a region: the cylinder of `radius` around the line through
@@ -196,7 +262,7 @@ export function maskRejectBound(region: PreparedMaskRegion): {
     // The bounding sphere of an oriented box is the same whatever its rotation.
     return {
       centre: region.center.clone(),
-      radius: region.halfExtents.length(),
+      radius: padRejectRadius(region.halfExtents.length()),
       axis: new Vector3(0, 0, 0),
     };
   }
@@ -219,7 +285,7 @@ export function maskRejectBound(region: PreparedMaskRegion): {
       .clone()
       .addScaledVector(basis.u, centreU)
       .addScaledVector(basis.w, centreW),
-    radius: Math.sqrt(radiusSq),
+    radius: padRejectRadius(Math.sqrt(radiusSq)),
     axis: basis.normal.clone(),
   };
 }

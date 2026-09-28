@@ -31,10 +31,16 @@ export const MASK_CHUNK_TOKEN = '//__MASK_CHUNK__';
  * compiles unchanged in this library's `RawShaderMaterial` point cloud shader and in a plain
  * three.js material, which three.js compiles as GLSL ES 3.00.
  *
- * The consuming material must declare the `uMaskRegionTex` uniform and bind the packed texture.
+ * The chunk declares the `uMaskRegionTex` uniform itself; the consuming material binds the packed
+ * texture to it and must not declare it again.
  */
 export const MASK_GLSL_CHUNK = `
-uniform sampler2D uMaskRegionTex;
+/* highp throughout, on purpose. The texel index reaches 3649 at the documented caps, and a
+   mediump float stops being exact above 2048 — the row it floors to would be the wrong one, and
+   the region it read would be another region's. The point cloud shader asks for highp anyway; a
+   plain three.js material takes whatever the GPU reports, which on the integrated GPUs this has
+   to run on is often mediump. */
+uniform highp sampler2D uMaskRegionTex;
 
 #define MASK_TEX_WIDTH ${f(MASK_TEXTURE_WIDTH)}
 #define MASK_TEX_INV_WIDTH ${1 / MASK_TEXTURE_WIDTH}
@@ -50,20 +56,20 @@ uniform sampler2D uMaskRegionTex;
 
 /* Texel at an absolute index. The reciprocals are exact powers of two, so the row/column split is
    exact for every index the layout can produce. */
-vec4 maskTexel(float index) {
-  float row = floor(index * MASK_TEX_INV_WIDTH);
-  float col = index - row * MASK_TEX_WIDTH;
+vec4 maskTexel(highp float index) {
+  highp float row = floor(index * MASK_TEX_INV_WIDTH);
+  highp float col = index - row * MASK_TEX_WIDTH;
   return texture2D(uMaskRegionTex, vec2((col + 0.5) * MASK_TEX_INV_WIDTH, (row + 0.5) * MASK_TEX_INV_HEIGHT));
 }
 
 /* One flattened prism vertex; two share a texel. */
-vec2 maskPrismVertex(float base, float index) {
-  float pair = floor(index * 0.5);
+vec2 maskPrismVertex(highp float base, highp float index) {
+  highp float pair = floor(index * 0.5);
   vec4 texel = maskTexel(base + pair);
   return (index - pair * 2.0 < 0.5) ? texel.xy : texel.zw;
 }
 
-bool maskCuboidContains(float base, vec3 worldPos) {
+bool maskCuboidContains(highp float base, vec3 worldPos) {
   mat4 inverseModel = mat4(
     maskTexel(base),
     maskTexel(base + 1.0),
@@ -80,7 +86,7 @@ bool maskCuboidContains(float base, vec3 worldPos) {
    position decides. The prism has no finite world AABB to reject against — it is unbounded along
    its normal — so the exact in-plane bounds do that job before the crossing loop, which at the
    vertex cap would otherwise be 100 edge tests per fragment. */
-bool maskPrismContains(float base, vec3 worldPos) {
+bool maskPrismContains(highp float base, vec3 worldPos) {
   vec4 head = maskTexel(base);
   float vertexCount = head.w;
   vec3 axisU = maskTexel(base + 1.0).xyz;
@@ -93,7 +99,7 @@ bool maskPrismContains(float base, vec3 worldPos) {
     return false;
   }
 
-  float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
+  highp float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
   bool inside = false;
   vec2 previous = maskPrismVertex(vertexBase, vertexCount - 1.0);
   for (int i = 0; i < MASK_MAX_PRISM_VERTICES; i++) {
@@ -136,9 +142,13 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
   float defaultOpacity = header.y;
 
   inside = false;
-  float result = defaultOpacity;
 
-  float group = -1.0;
+  /* The best opacity any mask that keeps this point asks for. Masks are unioned, so a point one
+     mask keeps is kept however many others do not — and where two keep it, the more visible of
+     them wins, as the box path this replaces did by taking the largest opacity. */
+  float keptOpacity = 0.0;
+
+  highp float group = -1.0;
   bool groupInside = false;
   float groupOpacity = 0.0;
 
@@ -148,13 +158,13 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
     /* The reject pair, at an address this loop can compute on its own. Nearly every fragment is
        outside nearly every region, and for those two fetches is the whole cost: the directory and
        the region's geometry are read only where they can change the answer. */
-    float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
+    highp float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
     vec4 bound = maskTexel(rejectBase);
     vec4 axis = maskTexel(rejectBase + 1.0);
 
-    float groupAndFlags = axis.w;
-    float entryGroup = floor(groupAndFlags * 0.25);
-    float flags = groupAndFlags - entryGroup * 4.0;
+    highp float groupAndFlags = axis.w;
+    highp float entryGroup = floor(groupAndFlags * 0.25);
+    highp float flags = groupAndFlags - entryGroup * 4.0;
 
     /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
        the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
@@ -171,7 +181,7 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
     if (startsGroup) {
       if (groupInside) {
         inside = true;
-        result = groupOpacity;
+        keptOpacity = max(keptOpacity, groupOpacity);
       }
       group = entryGroup;
       // This entry is the group's first, so its operation is the seed.
@@ -195,9 +205,9 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 
   if (groupInside) {
     inside = true;
-    result = groupOpacity;
+    keptOpacity = max(keptOpacity, groupOpacity);
   }
 
-  return result;
+  return inside ? keptOpacity : defaultOpacity;
 }
 `;

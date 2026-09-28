@@ -20,7 +20,7 @@ import { P as PointAttributeTypes, a as PointAttribute, b as PointAttributes$1 }
 const MASK_TEXTURE_WIDTH = 64;
 /** Rows in the texture. */
 const MASK_TEXTURE_HEIGHT = 64;
-/** Total texels available. Worst-case content is ~2993, so the grid is never the binding limit. */
+/** Total texels available. Worst-case content is 3649 at the caps, so the grid never binds first. */
 const MASK_TEXTURE_TEXELS = MASK_TEXTURE_WIDTH * MASK_TEXTURE_HEIGHT;
 /** Texels before the region directory: one header texel, `[regionCount, defaultOpacity, 0, 0]`. */
 const MASK_HEADER_TEXELS = 1;
@@ -64,7 +64,7 @@ const MASK_CUBOID_PAYLOAD_TEXELS = 6;
 const MASK_PRISM_HEADER_TEXELS = 4;
 /** Vertices one prism may carry. The consumer enforces the same cap at draw time. */
 const MASK_MAX_PRISM_VERTICES = 100;
-/** Vertices a whole mask may carry across all of its prisms. */
+/** Vertices **one mask** may carry across all of its prisms. A scene may hold several masks. */
 const MASK_MAX_TOTAL_VERTICES = 2800;
 /**
  * A directory texel's first channel: the region's kind and operation as two flag bits, so the
@@ -239,6 +239,10 @@ function isInsideMaskRegion(point, region) {
  * everything and shrinks ("hide what I outlined"). Seeding empty regardless would answer "nothing
  * is kept" for every mask that opens with an exclude.
  *
+ * Takes **one** mask's regions. A list holding several masks — anything from `prepareMaskRegion`
+ * over regions with differing `group` values — is not that, and painting it as one ordered mask
+ * gives an answer the shader does not: use {@link isInsideMask}, which partitions first.
+ *
  * @param point The world point to test.
  * @param regions One mask's regions, in order. An empty list keeps nothing.
  */
@@ -253,6 +257,69 @@ function isInsideMaskGroup(point, regions) {
     }
     return inside;
 }
+/**
+ * Whether the mask as a whole keeps a world point.
+ *
+ * The CPU counterpart of `maskEvaluate`, in full: regions are grouped by `group` — each group is
+ * one mask, ordered within itself — and the groups are **unioned**. A point one mask keeps is kept
+ * however many others do not, which is what stops one mask's `exclude` erasing what another kept.
+ *
+ * This is the one to call on the output of `prepareMaskRegion`, where `group` defaults to the
+ * region's index and every region is therefore its own mask.
+ *
+ * @param point The world point to test.
+ * @param regions Every region of the mask, in order. Regions of one group need not be adjacent.
+ */
+function isInsideMask(point, regions) {
+    const groups = new Map();
+    for (const region of regions) {
+        const existing = groups.get(region.group);
+        if (existing)
+            existing.push(region);
+        else
+            groups.set(region.group, [region]);
+    }
+    for (const group of groups.values()) {
+        if (isInsideMaskGroup(point, group))
+            return true;
+    }
+    return false;
+}
+/**
+ * Whether any mask in the list is seeded by an `exclude`.
+ *
+ * Such a mask keeps everything its regions do not cover, so "outside every region" stops meaning
+ * "not masked" and nothing can be culled on that basis. Any consumer that culls by intersection —
+ * octree nodes here, mesh tiles elsewhere — has to ask this first, or it will cull away exactly
+ * the part such a mask keeps.
+ *
+ * @param regions Every prepared region, in order.
+ */
+function hasExcludeSeededGroup(regions) {
+    const seen = new Set();
+    for (const region of regions) {
+        if (seen.has(region.group))
+            continue;
+        seen.add(region.group);
+        if (region.operation === MaskOperation.Exclude)
+            return true;
+    }
+    return false;
+}
+/**
+ * Widen a reject radius so a point exactly on it still passes.
+ *
+ * The radius is packed into a float32 texel and compared there, and the exact distance to the
+ * farthest vertex — a box corner, a vertex of an outline — is not generally representable. Rounded
+ * down by a single unit in the last place, the bound rejects the very points it was measured from,
+ * and the region loses a hairline of its own edge.
+ *
+ * The bound only decides whether the exact test runs, so widening it costs a few more exact tests
+ * at the edge and nothing else. The relative term covers the float32 step at any scale the
+ * coordinate limit allows; the absolute one covers an outline small enough that the relative term
+ * rounds to nothing.
+ */
+const padRejectRadius = (radius) => radius * (1 + 1e-5) + 1e-4;
 /**
  * A conservative world bound for a region: the cylinder of `radius` around the line through
  * `centre` along `axis`, or — when `axis` is zero — the sphere of `radius` around `centre`.
@@ -269,7 +336,7 @@ function maskRejectBound(region) {
         // The bounding sphere of an oriented box is the same whatever its rotation.
         return {
             centre: region.center.clone(),
-            radius: region.halfExtents.length(),
+            radius: padRejectRadius(region.halfExtents.length()),
             axis: new Vector3(0, 0, 0),
         };
     }
@@ -290,7 +357,7 @@ function maskRejectBound(region) {
             .clone()
             .addScaledVector(basis.u, centreU)
             .addScaledVector(basis.w, centreW),
-        radius: Math.sqrt(radiusSq),
+        radius: padRejectRadius(Math.sqrt(radiusSq)),
         axis: basis.normal.clone(),
     };
 }
@@ -421,10 +488,16 @@ const MASK_CHUNK_TOKEN = '//__MASK_CHUNK__';
  * compiles unchanged in this library's `RawShaderMaterial` point cloud shader and in a plain
  * three.js material, which three.js compiles as GLSL ES 3.00.
  *
- * The consuming material must declare the `uMaskRegionTex` uniform and bind the packed texture.
+ * The chunk declares the `uMaskRegionTex` uniform itself; the consuming material binds the packed
+ * texture to it and must not declare it again.
  */
 const MASK_GLSL_CHUNK = `
-uniform sampler2D uMaskRegionTex;
+/* highp throughout, on purpose. The texel index reaches 3649 at the documented caps, and a
+   mediump float stops being exact above 2048 — the row it floors to would be the wrong one, and
+   the region it read would be another region's. The point cloud shader asks for highp anyway; a
+   plain three.js material takes whatever the GPU reports, which on the integrated GPUs this has
+   to run on is often mediump. */
+uniform highp sampler2D uMaskRegionTex;
 
 #define MASK_TEX_WIDTH ${f(MASK_TEXTURE_WIDTH)}
 #define MASK_TEX_INV_WIDTH ${1 / MASK_TEXTURE_WIDTH}
@@ -440,20 +513,20 @@ uniform sampler2D uMaskRegionTex;
 
 /* Texel at an absolute index. The reciprocals are exact powers of two, so the row/column split is
    exact for every index the layout can produce. */
-vec4 maskTexel(float index) {
-  float row = floor(index * MASK_TEX_INV_WIDTH);
-  float col = index - row * MASK_TEX_WIDTH;
+vec4 maskTexel(highp float index) {
+  highp float row = floor(index * MASK_TEX_INV_WIDTH);
+  highp float col = index - row * MASK_TEX_WIDTH;
   return texture2D(uMaskRegionTex, vec2((col + 0.5) * MASK_TEX_INV_WIDTH, (row + 0.5) * MASK_TEX_INV_HEIGHT));
 }
 
 /* One flattened prism vertex; two share a texel. */
-vec2 maskPrismVertex(float base, float index) {
-  float pair = floor(index * 0.5);
+vec2 maskPrismVertex(highp float base, highp float index) {
+  highp float pair = floor(index * 0.5);
   vec4 texel = maskTexel(base + pair);
   return (index - pair * 2.0 < 0.5) ? texel.xy : texel.zw;
 }
 
-bool maskCuboidContains(float base, vec3 worldPos) {
+bool maskCuboidContains(highp float base, vec3 worldPos) {
   mat4 inverseModel = mat4(
     maskTexel(base),
     maskTexel(base + 1.0),
@@ -470,7 +543,7 @@ bool maskCuboidContains(float base, vec3 worldPos) {
    position decides. The prism has no finite world AABB to reject against — it is unbounded along
    its normal — so the exact in-plane bounds do that job before the crossing loop, which at the
    vertex cap would otherwise be 100 edge tests per fragment. */
-bool maskPrismContains(float base, vec3 worldPos) {
+bool maskPrismContains(highp float base, vec3 worldPos) {
   vec4 head = maskTexel(base);
   float vertexCount = head.w;
   vec3 axisU = maskTexel(base + 1.0).xyz;
@@ -483,7 +556,7 @@ bool maskPrismContains(float base, vec3 worldPos) {
     return false;
   }
 
-  float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
+  highp float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
   bool inside = false;
   vec2 previous = maskPrismVertex(vertexBase, vertexCount - 1.0);
   for (int i = 0; i < MASK_MAX_PRISM_VERTICES; i++) {
@@ -526,9 +599,13 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
   float defaultOpacity = header.y;
 
   inside = false;
-  float result = defaultOpacity;
 
-  float group = -1.0;
+  /* The best opacity any mask that keeps this point asks for. Masks are unioned, so a point one
+     mask keeps is kept however many others do not — and where two keep it, the more visible of
+     them wins, as the box path this replaces did by taking the largest opacity. */
+  float keptOpacity = 0.0;
+
+  highp float group = -1.0;
   bool groupInside = false;
   float groupOpacity = 0.0;
 
@@ -538,13 +615,13 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
     /* The reject pair, at an address this loop can compute on its own. Nearly every fragment is
        outside nearly every region, and for those two fetches is the whole cost: the directory and
        the region's geometry are read only where they can change the answer. */
-    float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
+    highp float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
     vec4 bound = maskTexel(rejectBase);
     vec4 axis = maskTexel(rejectBase + 1.0);
 
-    float groupAndFlags = axis.w;
-    float entryGroup = floor(groupAndFlags * 0.25);
-    float flags = groupAndFlags - entryGroup * 4.0;
+    highp float groupAndFlags = axis.w;
+    highp float entryGroup = floor(groupAndFlags * 0.25);
+    highp float flags = groupAndFlags - entryGroup * 4.0;
 
     /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
        the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
@@ -561,7 +638,7 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
     if (startsGroup) {
       if (groupInside) {
         inside = true;
-        result = groupOpacity;
+        keptOpacity = max(keptOpacity, groupOpacity);
       }
       group = entryGroup;
       // This entry is the group's first, so its operation is the seed.
@@ -585,10 +662,10 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 
   if (groupInside) {
     inside = true;
-    result = groupOpacity;
+    keptOpacity = max(keptOpacity, groupOpacity);
   }
 
-  return result;
+  return inside ? keptOpacity : defaultOpacity;
 }
 `;
 
@@ -610,8 +687,26 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 function packMaskRegions(regions, defaultOpacity) {
     const data = new Float32Array(MASK_TEXTURE_TEXELS * 4);
     const packed = [];
+    /**
+     * Group numbers as packed, renumbered densely in first-appearance order.
+     *
+     * A caller's group is any number it likes — a session counter, something derived from an id —
+     * and the reject texel carries it as `group * 4 + flags`, which is only exact while it stays
+     * small. Renumbering here creates that invariant instead of assuming it, and changes nothing
+     * about the mask: only equality between groups is ever read, never the value.
+     */
+    const packedGroups = new Map();
+    const groupIndex = (group) => {
+        const existing = packedGroups.get(group);
+        if (existing !== undefined)
+            return existing;
+        const next = packedGroups.size;
+        packedGroups.set(group, next);
+        return next;
+    };
     let payloadCursor = MASK_PAYLOAD_OFFSET;
-    let totalVertices = 0;
+    /** Vertices packed so far for each mask, since the cap is what one mask may carry. */
+    const groupVertices = new Map();
     for (let index = 0; index < regions.length; index++) {
         const region = regions[index];
         if (packed.length >= MASK_MAX_REGIONS)
@@ -621,27 +716,32 @@ function packMaskRegions(regions, defaultOpacity) {
             continue;
         const isPrism = prepared.kind === MaskRegionKind.Prism;
         const vertexCount = isPrism ? prepared.vertexCount : 0;
+        // Per mask, not per scene: the cap bounds what one mask may carry, and a scene is free to hold
+        // several of them — the payload capacity below is what bounds the scene.
+        //
         // Stop rather than skip: order is the mask's meaning, and stepping over one region to fit a
         // later, smaller one silently produces a differently-ordered mask.
-        if (isPrism && totalVertices + vertexCount > MASK_MAX_TOTAL_VERTICES)
+        const packedForGroup = groupVertices.get(prepared.group) ?? 0;
+        if (isPrism && packedForGroup + vertexCount > MASK_MAX_TOTAL_VERTICES)
             break;
         const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
         if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS)
             break;
         const flags = (isPrism ? MASK_FLAG_PRISM : 0) +
             (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
+        const group = groupIndex(prepared.group);
         // Directory slot: [flags, payloadOffset, opacity, group].
         const slot = (MASK_HEADER_TEXELS + packed.length) * 4;
         data[slot + 0] = flags;
         data[slot + 1] = payloadCursor;
         data[slot + 2] = prepared.opacity;
-        data[slot + 3] = prepared.group;
+        data[slot + 3] = group;
         // Reject slot: [centre.xyz, radius], [axis.xyz, group * 4 + flags]. Read first and, for a
         // region the fragment is nowhere near, read instead of everything else.
         const reject = (MASK_REJECT_OFFSET + packed.length * MASK_REJECT_TEXELS) * 4;
         const bound = maskRejectBound(prepared);
         data.set([bound.centre.x, bound.centre.y, bound.centre.z, bound.radius], reject);
-        data.set([bound.axis.x, bound.axis.y, bound.axis.z, prepared.group * 4 + flags], reject + 4);
+        data.set([bound.axis.x, bound.axis.y, bound.axis.z, group * 4 + flags], reject + 4);
         const payload = payloadCursor * 4;
         if (prepared.kind === MaskRegionKind.Cuboid) {
             data.set(cuboidInverseModelMatrix(prepared).toArray(), payload);
@@ -662,7 +762,7 @@ function packMaskRegions(regions, defaultOpacity) {
                 data[vertices + i * 2 + 0] = basis.flat[i].x;
                 data[vertices + i * 2 + 1] = basis.flat[i].y;
             }
-            totalVertices += vertexCount;
+            groupVertices.set(prepared.group, packedForGroup + vertexCount);
         }
         payloadCursor += payloadLength;
         packed.push(prepared);
@@ -5135,8 +5235,7 @@ class Potree {
         this.masks = {
             regions: packed.regions,
             defaultOpacity: config.defaultOpacity,
-            hasExcludeSeededGroup: packed.regions.some((region, index) => region.operation === MaskOperation.Exclude &&
-                (index === 0 || packed.regions[index - 1].group !== region.group)),
+            hasExcludeSeededGroup: hasExcludeSeededGroup(packed.regions),
         };
         this.maskShaderEnabled = true;
         // For debugging: visualize the box masks in the scene. A prism is infinite along its normal,
@@ -5159,6 +5258,10 @@ class Potree {
         this.masks.regions.forEach(({ id }) => {
             clearHelper(scene, `mask-region-helper-aabb-${id}`);
         });
+        // Nothing to clear and nothing ever set: leaving the latch alone spares every point cloud
+        // material a recompile for a mask with no regions in it.
+        if (!this.maskShaderEnabled)
+            return;
         this.setMaskConfig({ regions: [], defaultOpacity: 1.0 });
     }
     /**
@@ -5361,5 +5464,5 @@ class Potree {
     }
 }
 
-export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_REJECT_OFFSET, MASK_REJECT_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, isInsideFlatPolygon, isInsideMaskGroup, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, maskRejectBound, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
+export { BlurMaterial, ClipMode, GRAYSCALE, INFERNO, MASK_CHUNK_TOKEN, MASK_COPLANARITY_TOLERANCE, MASK_CUBOID_PAYLOAD_TEXELS, MASK_FLAG_EXCLUDE, MASK_FLAG_PRISM, MASK_GLSL_CHUNK, MASK_HEADER_TEXELS, MASK_MAX_PRISM_VERTICES, MASK_MAX_REGIONS, MASK_MAX_TOTAL_VERTICES, MASK_PAYLOAD_OFFSET, MASK_PRISM_HEADER_TEXELS, MASK_REJECT_OFFSET, MASK_REJECT_TEXELS, MASK_TEXTURE_HEIGHT, MASK_TEXTURE_TEXELS, MASK_TEXTURE_WIDTH, MaskOperation, MaskRegionKind, NormalFilteringMode, PLASMA, PointAttributeName, PointAttributes, PointCloudMaterial, PointCloudMixingMode, PointCloudOctree, PointCloudOctreeGeometry, PointCloudOctreeGeometryNode, PointCloudOctreeNode, PointCloudOctreePicker, PointCloudTree, PointColorType, PointOpacityType, PointShape, PointSizeType, Potree, QueueItem, RAINBOW, SPECTRAL, TreeType, loadPOC as V1_LOADER, loadOctree as V2_LOADER, VIRIDIS, Version, YELLOW_GREEN, createMaskDataTexture, cuboidInverseModelMatrix, fitPrismBasis, generateClassificationTexture, generateDataTexture, generateGradientTexture, hasExcludeSeededGroup, isInsideFlatPolygon, isInsideMask, isInsideMaskGroup, isInsideMaskRegion, isPrismRegion, maskRegionContainsBox, maskRegionIntersectsBox, maskRejectBound, packMaskRegions, prepareMaskRegion, prismPayloadTexels, writeMaskDataTexture };
 //# sourceMappingURL=index.js.map

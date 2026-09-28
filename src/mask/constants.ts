@@ -18,7 +18,7 @@ export const MASK_TEXTURE_WIDTH = 64;
 /** Rows in the texture. */
 export const MASK_TEXTURE_HEIGHT = 64;
 
-/** Total texels available. Worst-case content is ~2993, so the grid is never the binding limit. */
+/** Total texels available. Worst-case content is 3649 at the caps, so the grid never binds first. */
 export const MASK_TEXTURE_TEXELS = MASK_TEXTURE_WIDTH * MASK_TEXTURE_HEIGHT;
 
 /** Texels before the region directory: one header texel, `[regionCount, defaultOpacity, 0, 0]`. */
@@ -71,7 +71,7 @@ export const MASK_PRISM_HEADER_TEXELS = 4;
 /** Vertices one prism may carry. The consumer enforces the same cap at draw time. */
 export const MASK_MAX_PRISM_VERTICES = 100;
 
-/** Vertices a whole mask may carry across all of its prisms. */
+/** Vertices **one mask** may carry across all of its prisms. A scene may hold several masks. */
 export const MASK_MAX_TOTAL_VERTICES = 2800;
 
 /**

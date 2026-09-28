@@ -28,12 +28,13 @@ import { PointCloudOctreeNode } from './point-cloud-octree-node';
 import { PickParams, PointCloudOctreePicker } from './point-cloud-octree-picker';
 import {
   createMaskDataTexture,
+  hasExcludeSeededGroup,
   maskRegionContainsBox,
   maskRegionIntersectsBox,
   packMaskRegions,
   writeMaskDataTexture,
 } from './mask';
-import { MaskConfig, MaskOperation, MaskRegionKind } from './mask/types';
+import { MaskConfig, MaskRegionKind } from './mask/types';
 import { isGeometryNode, isTreeNode } from './type-predicates';
 import {
   InternalMaskConfig,
@@ -185,11 +186,7 @@ export class Potree implements IPotree {
     this.masks = {
       regions: packed.regions,
       defaultOpacity: config.defaultOpacity,
-      hasExcludeSeededGroup: packed.regions.some(
-        (region, index) =>
-          region.operation === MaskOperation.Exclude &&
-          (index === 0 || packed.regions[index - 1].group !== region.group),
-      ),
+      hasExcludeSeededGroup: hasExcludeSeededGroup(packed.regions),
     };
     this.maskShaderEnabled = true;
 
@@ -213,6 +210,9 @@ export class Potree implements IPotree {
     this.masks.regions.forEach(({ id }) => {
       clearHelper(scene, `mask-region-helper-aabb-${id}`);
     });
+    // Nothing to clear and nothing ever set: leaving the latch alone spares every point cloud
+    // material a recompile for a mask with no regions in it.
+    if (!this.maskShaderEnabled) return;
     this.setMaskConfig({ regions: [], defaultOpacity: 1.0 });
   }
 

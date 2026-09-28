@@ -15,3 +15,6 @@ jobs:
           node-version: 20
       - run: yarn install --ignore-scripts
       - run: yarn test
+      # `dist/` is committed and is what every consumer installs, so a stale one ships silently.
+      - run: yarn build
+      - run: git diff --exit-code dist

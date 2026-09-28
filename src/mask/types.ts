@@ -55,7 +55,13 @@ export interface MaskPrism {
   positions: Vector3[];
   /** Defaults to {@link MaskOperation.Include}. */
   operation?: MaskOperation;
-  /** Opacity for points inside (ignored for an `exclude` prism). */
+  /**
+   * Opacity for points this region keeps.
+   *
+   * An `exclude` region keeps nothing, so its own opacity normally goes unread — with one
+   * exception: when it is the **first** region of its mask it seeds the mask from everything, and
+   * the opacity everything is then kept at is this one.
+   */
   opacity: number;
 }
 

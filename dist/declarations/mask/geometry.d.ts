@@ -39,10 +39,39 @@ export declare function isInsideMaskRegion(point: Vector3, region: PreparedMaskR
  * everything and shrinks ("hide what I outlined"). Seeding empty regardless would answer "nothing
  * is kept" for every mask that opens with an exclude.
  *
+ * Takes **one** mask's regions. A list holding several masks — anything from `prepareMaskRegion`
+ * over regions with differing `group` values — is not that, and painting it as one ordered mask
+ * gives an answer the shader does not: use {@link isInsideMask}, which partitions first.
+ *
  * @param point The world point to test.
  * @param regions One mask's regions, in order. An empty list keeps nothing.
  */
 export declare function isInsideMaskGroup(point: Vector3, regions: PreparedMaskRegion[]): boolean;
+/**
+ * Whether the mask as a whole keeps a world point.
+ *
+ * The CPU counterpart of `maskEvaluate`, in full: regions are grouped by `group` — each group is
+ * one mask, ordered within itself — and the groups are **unioned**. A point one mask keeps is kept
+ * however many others do not, which is what stops one mask's `exclude` erasing what another kept.
+ *
+ * This is the one to call on the output of `prepareMaskRegion`, where `group` defaults to the
+ * region's index and every region is therefore its own mask.
+ *
+ * @param point The world point to test.
+ * @param regions Every region of the mask, in order. Regions of one group need not be adjacent.
+ */
+export declare function isInsideMask(point: Vector3, regions: PreparedMaskRegion[]): boolean;
+/**
+ * Whether any mask in the list is seeded by an `exclude`.
+ *
+ * Such a mask keeps everything its regions do not cover, so "outside every region" stops meaning
+ * "not masked" and nothing can be culled on that basis. Any consumer that culls by intersection —
+ * octree nodes here, mesh tiles elsewhere — has to ask this first, or it will cull away exactly
+ * the part such a mask keeps.
+ *
+ * @param regions Every prepared region, in order.
+ */
+export declare function hasExcludeSeededGroup(regions: PreparedMaskRegion[]): boolean;
 /**
  * A conservative world bound for a region: the cylinder of `radius` around the line through
  * `centre` along `axis`, or — when `axis` is zero — the sphere of `radius` around `centre`.

@@ -363,14 +363,14 @@ writeMaskDataTexture(texture, packMaskRegions(nextRegions, defaultOpacity));
 
 And for the same answer without a GPU — picking, draw-time validation — use the TypeScript containment test on a prepared region:
 
-`isInsideMaskRegion` answers for one region; `isInsideMaskGroup` answers for a whole mask, applying the ordering and the seeding rule exactly as the shader does — use that one unless you really mean a single region.
+`isInsideMask` is the one to call: it groups the regions by `group`, applies the ordering and the seeding rule within each mask exactly as the shader does, and unions the masks. `isInsideMaskGroup` answers for **one** mask — pass it a single mask's regions, never a mixed list — and `isInsideMaskRegion` for a single region.
 
 ```typescript
 const prepared = regions.map(prepareMaskRegion).filter((region) => region !== null);
-if (isInsideMaskGroup(point, prepared)) { /* … */ }
+if (isInsideMask(point, prepared)) { /* … */ }
 ```
 
-The GLSL and TypeScript containment tests are the one unavoidable duplicate, so they are pinned to a shared fixture (`src/mask/__tests__/containment.fixture.ts`) asserted in CI.
+The GLSL and TypeScript containment tests are the one unavoidable duplicate, so they are pinned to a shared fixture (`src/mask/__tests__/containment.fixture.ts`) asserted in CI, and the shader's own loop is transcribed in `src/mask/__tests__/evaluate.ts` and run against real packed buffers — so the seeding, the ordering and the union are asserted rather than read.
 
 **Layout constants are exported too** (`MASK_TEXTURE_WIDTH`, `MASK_HEADER_TEXELS`, `MASK_MAX_REGIONS`, …). Read them; never hard-code a texel offset.
 

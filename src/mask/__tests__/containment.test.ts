@@ -4,10 +4,14 @@ import {
   MASK_FLAG_EXCLUDE,
   MASK_FLAG_PRISM,
   MASK_HEADER_TEXELS,
+  MASK_MAX_REGIONS,
   MASK_PAYLOAD_OFFSET,
+  MASK_REJECT_OFFSET,
+  MASK_REJECT_TEXELS,
 } from '../constants';
 import {
   fitPrismBasis,
+  isInsideMask,
   isInsideMaskGroup,
   isInsideMaskRegion,
   maskRejectBound,
@@ -16,6 +20,7 @@ import {
 import { packMaskRegions } from '../packing';
 import { MaskOperation, MaskRegionKind } from '../types';
 import { CONTAINMENT_CASES } from './containment.fixture';
+import { evaluatePackedMask } from './evaluate';
 
 describe('mask containment', () => {
   for (const testCase of CONTAINMENT_CASES) {
@@ -219,8 +224,29 @@ describe('packing', () => {
       ],
       0,
     );
-    expect(grouped.data[(MASK_HEADER_TEXELS + 0) * 4 + 3]).toBe(7);
-    expect(grouped.data[(MASK_HEADER_TEXELS + 1) * 4 + 3]).toBe(7);
+    // The packed number is the caller's renumbered densely — only equality between groups is ever
+    // read, and a small one is what keeps `group * 4 + flags` exact in the reject texel.
+    const groupedGroupOf = (index: number) => grouped.data[(MASK_HEADER_TEXELS + index) * 4 + 3];
+    expect(groupedGroupOf(0)).toBe(groupedGroupOf(1));
+    expect(groupedGroupOf(0)).toBeLessThan(MASK_MAX_REGIONS);
+  });
+
+  it('renumbers groups densely, so a caller is free to name them anything', () => {
+    const packed = packMaskRegions(
+      [
+        { kind: MaskRegionKind.Prism, id: 'a', positions: outline, group: 90000, opacity: 1 },
+        { kind: MaskRegionKind.Prism, id: 'b', positions: outline, group: -4, opacity: 1 },
+        { kind: MaskRegionKind.Prism, id: 'c', positions: outline, group: 90000, opacity: 1 },
+      ],
+      0,
+    );
+    const groupOfPacked = (index: number) => packed.data[(MASK_HEADER_TEXELS + index) * 4 + 3];
+    expect([groupOfPacked(0), groupOfPacked(1), groupOfPacked(2)]).toEqual([0, 1, 0]);
+
+    // The reject texel's packed `group * 4 + flags` has to survive it exactly.
+    const rejectAt = (index: number) =>
+      packed.data[(MASK_REJECT_OFFSET + index * MASK_REJECT_TEXELS) * 4 + 7];
+    expect(Math.floor(rejectAt(1) * 0.25)).toBe(1);
   });
 
   it('drops a degenerate outline rather than packing a different shape', () => {
@@ -327,5 +353,96 @@ describe('mask reject bound', () => {
       }
     }
     expect(isNearby(bound, new Vector3(20, 2, 3))).toBe(false);
+  });
+});
+
+/**
+ * The shader's own loop, against real packed buffers.
+ *
+ * `isInsideMaskGroup` answers for one mask, and the fixture above pins one region at a time — so
+ * neither of them says anything about the rules that only appear once a scene holds more than one
+ * mask: seeding, ordered painting, and the union that stops one mask erasing another. Those are
+ * precisely the rules a wrong scene is made of.
+ */
+describe('mask evaluation, as the shader does it', () => {
+  const square = (offsetX: number, size: number): Vector3[] => [
+    new Vector3(offsetX, 0, 0),
+    new Vector3(offsetX + size, 0, 0),
+    new Vector3(offsetX + size, size, 0),
+    new Vector3(offsetX, size, 0),
+  ];
+
+  const prism = (
+    id: string,
+    positions: Vector3[],
+    extra: { group?: number; operation?: MaskOperation; opacity?: number } = {},
+  ) => ({ kind: MaskRegionKind.Prism as const, id, positions, opacity: 1, ...extra });
+
+  it('keeps what one mask keeps, whatever another mask hides', () => {
+    // A keeps a big square. B is a separate mask that hides a small square far away, and being
+    // seeded by an exclude it keeps everything else — including every point of A.
+    const packed = packMaskRegions(
+      [
+        prism('a', square(0, 10), { group: 0 }),
+        prism('b', square(100, 2), { group: 1, operation: MaskOperation.Exclude, opacity: 0 }),
+      ],
+      0,
+    );
+
+    const insideA = evaluatePackedMask(packed, new Vector3(5, 5, 3));
+    expect(insideA.inside).toBe(true);
+    expect(insideA.opacity).toBeGreaterThan(0)
+  });
+
+  it('takes the more visible opacity where two masks both keep a point', () => {
+    const packed = packMaskRegions(
+      [
+        prism('dim', square(0, 10), { group: 0, opacity: 0.3 }),
+        prism('bright', square(0, 10), { group: 1, opacity: 1 }),
+      ],
+      0,
+    );
+    expect(evaluatePackedMask(packed, new Vector3(5, 5, 0)).opacity).toBe(1);
+  });
+
+  it('lets a later outline of the same mask take back what an earlier one kept', () => {
+    const packed = packMaskRegions(
+      [
+        prism('keep', square(0, 10), { group: 0 }),
+        prism('carve', square(2, 3), { group: 0, operation: MaskOperation.Exclude }),
+      ],
+      0,
+    );
+    expect(evaluatePackedMask(packed, new Vector3(3, 1.5, 0)).inside).toBe(false);
+    expect(evaluatePackedMask(packed, new Vector3(8, 8, 0)).inside).toBe(true);
+  });
+
+  it('seeds a mask from everything when its first outline is an exclude', () => {
+    const packed = packMaskRegions(
+      [prism('hide', square(0, 10), { group: 0, operation: MaskOperation.Exclude })],
+      0,
+    );
+    expect(evaluatePackedMask(packed, new Vector3(5, 5, 0)).inside).toBe(false);
+    expect(evaluatePackedMask(packed, new Vector3(500, 500, 0)).inside).toBe(true);
+  });
+
+  it('takes the outside default where no mask keeps the point', () => {
+    const packed = packMaskRegions([prism('a', square(0, 10), { group: 0 })], 0.25);
+    const outside = evaluatePackedMask(packed, new Vector3(500, 500, 0));
+    expect(outside.inside).toBe(false);
+    expect(outside.opacity).toBe(0.25);
+  });
+
+  it('agrees with the TypeScript evaluation on every fixture case', () => {
+    for (const testCase of CONTAINMENT_CASES) {
+      const packed = packMaskRegions([testCase.region], 0);
+      const prepared = packed.regions;
+      for (const point of [...testCase.inside, ...testCase.outside]) {
+        expect(
+          evaluatePackedMask(packed, point).inside,
+          `${testCase.name} at ${point.toArray().join(', ')}`,
+        ).toBe(isInsideMask(point, prepared));
+      }
+    }
   });
 });

@@ -15,6 +15,7 @@ export declare const MASK_CHUNK_TOKEN = "//__MASK_CHUNK__";
  * compiles unchanged in this library's `RawShaderMaterial` point cloud shader and in a plain
  * three.js material, which three.js compiles as GLSL ES 3.00.
  *
- * The consuming material must declare the `uMaskRegionTex` uniform and bind the packed texture.
+ * The chunk declares the `uMaskRegionTex` uniform itself; the consuming material binds the packed
+ * texture to it and must not declare it again.
  */
 export declare const MASK_GLSL_CHUNK: string;

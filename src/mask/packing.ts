@@ -37,8 +37,27 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
   const data = new Float32Array(MASK_TEXTURE_TEXELS * 4);
   const packed: PreparedMaskRegion[] = [];
 
+  /**
+   * Group numbers as packed, renumbered densely in first-appearance order.
+   *
+   * A caller's group is any number it likes — a session counter, something derived from an id —
+   * and the reject texel carries it as `group * 4 + flags`, which is only exact while it stays
+   * small. Renumbering here creates that invariant instead of assuming it, and changes nothing
+   * about the mask: only equality between groups is ever read, never the value.
+   */
+  const packedGroups = new Map<number, number>();
+  const groupIndex = (group: number): number => {
+    const existing = packedGroups.get(group);
+    if (existing !== undefined) return existing;
+    const next = packedGroups.size;
+    packedGroups.set(group, next);
+    return next;
+  };
+
   let payloadCursor = MASK_PAYLOAD_OFFSET;
-  let totalVertices = 0;
+
+  /** Vertices packed so far for each mask, since the cap is what one mask may carry. */
+  const groupVertices = new Map<number, number>();
 
   for (let index = 0; index < regions.length; index++) {
     const region = regions[index];
@@ -49,9 +68,13 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
 
     const isPrism = prepared.kind === MaskRegionKind.Prism;
     const vertexCount = isPrism ? prepared.vertexCount : 0;
+    // Per mask, not per scene: the cap bounds what one mask may carry, and a scene is free to hold
+    // several of them — the payload capacity below is what bounds the scene.
+    //
     // Stop rather than skip: order is the mask's meaning, and stepping over one region to fit a
     // later, smaller one silently produces a differently-ordered mask.
-    if (isPrism && totalVertices + vertexCount > MASK_MAX_TOTAL_VERTICES) break;
+    const packedForGroup = groupVertices.get(prepared.group) ?? 0;
+    if (isPrism && packedForGroup + vertexCount > MASK_MAX_TOTAL_VERTICES) break;
 
     const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
     if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS) break;
@@ -60,19 +83,21 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
       (isPrism ? MASK_FLAG_PRISM : 0) +
       (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
 
+    const group = groupIndex(prepared.group);
+
     // Directory slot: [flags, payloadOffset, opacity, group].
     const slot = (MASK_HEADER_TEXELS + packed.length) * 4;
     data[slot + 0] = flags;
     data[slot + 1] = payloadCursor;
     data[slot + 2] = prepared.opacity;
-    data[slot + 3] = prepared.group;
+    data[slot + 3] = group;
 
     // Reject slot: [centre.xyz, radius], [axis.xyz, group * 4 + flags]. Read first and, for a
     // region the fragment is nowhere near, read instead of everything else.
     const reject = (MASK_REJECT_OFFSET + packed.length * MASK_REJECT_TEXELS) * 4;
     const bound = maskRejectBound(prepared);
     data.set([bound.centre.x, bound.centre.y, bound.centre.z, bound.radius], reject);
-    data.set([bound.axis.x, bound.axis.y, bound.axis.z, prepared.group * 4 + flags], reject + 4);
+    data.set([bound.axis.x, bound.axis.y, bound.axis.z, group * 4 + flags], reject + 4);
 
     const payload = payloadCursor * 4;
     if (prepared.kind === MaskRegionKind.Cuboid) {
@@ -94,7 +119,7 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
         data[vertices + i * 2 + 0] = basis.flat[i].x;
         data[vertices + i * 2 + 1] = basis.flat[i].y;
       }
-      totalVertices += vertexCount;
+      groupVertices.set(prepared.group, packedForGroup + vertexCount);
     }
 
     payloadCursor += payloadLength;
