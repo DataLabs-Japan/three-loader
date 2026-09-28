@@ -296,12 +296,19 @@ describe('packing', () => {
     });
 
     it('is dropped whole when the directory cannot hold it', () => {
-      const wide = Array.from({ length: MASK_MAX_REGIONS }, (_, i) => bigPrism(`wide-${i}`, 1, 3));
-      const packed = packMaskRegions([...wide, bigPrism('second', 2, 3)], 0);
+      // 250 + 10 straddles the 256-slot directory, so a per-region limit would take the first six
+      // of the second mask and leave it four outlines short — the case a mask filling the
+      // directory exactly cannot show.
+      const first = Array.from({ length: 250 }, (_, i) => bigPrism(`first-${i}`, 1, 3));
+      const second = Array.from({ length: 10 }, (_, i) => bigPrism(`second-${i}`, 2, 3));
+      const packed = packMaskRegions([...first, ...second, bigPrism('last', 3, 3)], 0);
 
-      // The first mask fills the directory exactly; the second cannot start, and is not half-packed.
-      expect(packed.regions.length).toBe(MASK_MAX_REGIONS);
-      expect(packed.regions.every((region) => region.group === 1)).toBe(true);
+      const packedOf = (group: number) => packed.regions.filter((region) => region.group === group).length;
+      expect(packedOf(1)).toBe(250);
+      expect(packedOf(2)).toBe(0);
+      // And a mask small enough to follow it still goes in.
+      expect(packedOf(3)).toBe(1);
+      expect(packed.regions.length).toBeLessThanOrEqual(MASK_MAX_REGIONS);
     });
   });
 
