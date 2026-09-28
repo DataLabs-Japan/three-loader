@@ -15,7 +15,12 @@
 export declare const MASK_TEXTURE_WIDTH = 64;
 /** Rows in the texture. */
 export declare const MASK_TEXTURE_HEIGHT = 64;
-/** Total texels available. Worst-case content is 3649 at the caps, so the grid never binds first. */
+/**
+ * Total texels available.
+ *
+ * The per-mask caps no longer bound a whole scene — it may hold several masks — so this is the
+ * limit the packer stops at, and the regions that did not fit are simply not in `PackedMask`.
+ */
 export declare const MASK_TEXTURE_TEXELS: number;
 /** Texels before the region directory: one header texel, `[regionCount, defaultOpacity, 0, 0]`. */
 export declare const MASK_HEADER_TEXELS = 1;

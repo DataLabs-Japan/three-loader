@@ -372,6 +372,8 @@ if (isInsideMask(point, prepared)) { /* … */ }
 
 The GLSL and TypeScript containment tests are the one unavoidable duplicate, so they are pinned to a shared fixture (`src/mask/__tests__/containment.fixture.ts`) asserted in CI, and the shader's own loop is transcribed in `src/mask/__tests__/evaluate.ts` and run against real packed buffers — so the seeding, the ordering and the union are asserted rather than read.
 
+**Where two masks both keep a point, the more visible of them decides its opacity.** Masks are unioned, so a point one mask keeps is kept whatever the others do, and the opacity it renders at is the largest any of them asked for. Worth knowing if your masks carry different opacities: a mask seeded by an `exclude` keeps everything outside its own outlines, so its opacity applies nearly everywhere — including inside every other mask.
+
 **Layout constants are exported too** (`MASK_TEXTURE_WIDTH`, `MASK_HEADER_TEXELS`, `MASK_MAX_REGIONS`, …). Read them; never hard-code a texel offset.
 
 ## Migration to the ordered `regions` API

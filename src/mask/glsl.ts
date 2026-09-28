@@ -35,11 +35,17 @@ export const MASK_CHUNK_TOKEN = '//__MASK_CHUNK__';
  * texture to it and must not declare it again.
  */
 export const MASK_GLSL_CHUNK = `
-/* highp throughout, on purpose. The texel index reaches 3649 at the documented caps, and a
-   mediump float stops being exact above 2048 — the row it floors to would be the wrong one, and
-   the region it read would be another region's. The point cloud shader asks for highp anyway; a
-   plain three.js material takes whatever the GPU reports, which on the integrated GPUs this has
-   to run on is often mediump. */
+/* Every float this chunk declares is highp, and none of it is optional.
+
+   The chunk is spliced into a host shader and inherits whatever precision that host declared, and
+   the two quantities here both need more than mediump gives. The texel index reaches into the
+   thousands, where a 10-bit mantissa stops being exact and the row it floors to is another
+   region's. World positions are worse: at the ±400 m coordinate limit the mediump quantum is
+   about 0.4 m, so the flattened coordinates and the crossing test collapse and the mask is wrong
+   everywhere rather than at one edge.
+
+   Both of this library's own consumers declare highp, so this is for the third one — the plain
+   three.js material this chunk is exported for, which takes whatever the GPU reports. */
 uniform highp sampler2D uMaskRegionTex;
 
 #define MASK_TEX_WIDTH ${f(MASK_TEXTURE_WIDTH)}
@@ -56,29 +62,29 @@ uniform highp sampler2D uMaskRegionTex;
 
 /* Texel at an absolute index. The reciprocals are exact powers of two, so the row/column split is
    exact for every index the layout can produce. */
-vec4 maskTexel(highp float index) {
+highp vec4 maskTexel(highp float index) {
   highp float row = floor(index * MASK_TEX_INV_WIDTH);
   highp float col = index - row * MASK_TEX_WIDTH;
   return texture2D(uMaskRegionTex, vec2((col + 0.5) * MASK_TEX_INV_WIDTH, (row + 0.5) * MASK_TEX_INV_HEIGHT));
 }
 
 /* One flattened prism vertex; two share a texel. */
-vec2 maskPrismVertex(highp float base, highp float index) {
+highp vec2 maskPrismVertex(highp float base, highp float index) {
   highp float pair = floor(index * 0.5);
-  vec4 texel = maskTexel(base + pair);
+  highp vec4 texel = maskTexel(base + pair);
   return (index - pair * 2.0 < 0.5) ? texel.xy : texel.zw;
 }
 
-bool maskCuboidContains(highp float base, vec3 worldPos) {
-  mat4 inverseModel = mat4(
+bool maskCuboidContains(highp float base, highp vec3 worldPos) {
+  highp mat4 inverseModel = mat4(
     maskTexel(base),
     maskTexel(base + 1.0),
     maskTexel(base + 2.0),
     maskTexel(base + 3.0)
   );
-  vec3 local = (inverseModel * vec4(worldPos, 1.0)).xyz;
-  vec3 lower = maskTexel(base + 4.0).xyz;
-  vec3 upper = maskTexel(base + 5.0).xyz;
+  highp vec3 local = (inverseModel * vec4(worldPos, 1.0)).xyz;
+  highp vec3 lower = maskTexel(base + 4.0).xyz;
+  highp vec3 upper = maskTexel(base + 5.0).xyz;
   return all(greaterThanEqual(local, lower)) && all(lessThanEqual(local, upper));
 }
 
@@ -86,25 +92,25 @@ bool maskCuboidContains(highp float base, vec3 worldPos) {
    position decides. The prism has no finite world AABB to reject against — it is unbounded along
    its normal — so the exact in-plane bounds do that job before the crossing loop, which at the
    vertex cap would otherwise be 100 edge tests per fragment. */
-bool maskPrismContains(highp float base, vec3 worldPos) {
-  vec4 head = maskTexel(base);
-  float vertexCount = head.w;
-  vec3 axisU = maskTexel(base + 1.0).xyz;
-  vec3 axisW = maskTexel(base + 2.0).xyz;
-  vec4 bounds = maskTexel(base + 3.0);
+bool maskPrismContains(highp float base, highp vec3 worldPos) {
+  highp vec4 head = maskTexel(base);
+  highp float vertexCount = head.w;
+  highp vec3 axisU = maskTexel(base + 1.0).xyz;
+  highp vec3 axisW = maskTexel(base + 2.0).xyz;
+  highp vec4 bounds = maskTexel(base + 3.0);
 
-  vec3 offset = worldPos - head.xyz;
-  vec2 flat2 = vec2(dot(offset, axisU), dot(offset, axisW));
+  highp vec3 offset = worldPos - head.xyz;
+  highp vec2 flat2 = vec2(dot(offset, axisU), dot(offset, axisW));
   if (flat2.x < bounds.x || flat2.y < bounds.y || flat2.x > bounds.z || flat2.y > bounds.w) {
     return false;
   }
 
   highp float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
   bool inside = false;
-  vec2 previous = maskPrismVertex(vertexBase, vertexCount - 1.0);
+  highp vec2 previous = maskPrismVertex(vertexBase, vertexCount - 1.0);
   for (int i = 0; i < MASK_MAX_PRISM_VERTICES; i++) {
     if (float(i) >= vertexCount) break;
-    vec2 current = maskPrismVertex(vertexBase, float(i));
+    highp vec2 current = maskPrismVertex(vertexBase, float(i));
     if (((current.y > flat2.y) != (previous.y > flat2.y)) &&
         (flat2.x < (previous.x - current.x) * (flat2.y - current.y) / (previous.y - current.y) + current.x)) {
       inside = !inside;
@@ -136,10 +142,10 @@ float maskRegionCount() {
    empty scene, which is not what the detector produces from the same regions.
 
    A point no group kept takes the outside-everything default. */
-float maskEvaluate(vec3 worldPos, out bool inside) {
-  vec4 header = maskTexel(0.0);
-  float regionCount = header.x;
-  float defaultOpacity = header.y;
+float maskEvaluate(highp vec3 worldPos, out bool inside) {
+  highp vec4 header = maskTexel(0.0);
+  highp float regionCount = header.x;
+  highp float defaultOpacity = header.y;
 
   inside = false;
 
@@ -159,8 +165,8 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
        outside nearly every region, and for those two fetches is the whole cost: the directory and
        the region's geometry are read only where they can change the answer. */
     highp float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
-    vec4 bound = maskTexel(rejectBase);
-    vec4 axis = maskTexel(rejectBase + 1.0);
+    highp vec4 bound = maskTexel(rejectBase);
+    highp vec4 axis = maskTexel(rejectBase + 1.0);
 
     highp float groupAndFlags = axis.w;
     highp float entryGroup = floor(groupAndFlags * 0.25);
@@ -168,15 +174,15 @@ float maskEvaluate(vec3 worldPos, out bool inside) {
 
     /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
        the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
-    vec3 offset = worldPos - bound.xyz;
-    vec3 radial = offset - dot(offset, axis.xyz) * axis.xyz;
+    highp vec3 offset = worldPos - bound.xyz;
+    highp vec3 radial = offset - dot(offset, axis.xyz) * axis.xyz;
     bool nearby = dot(radial, radial) <= bound.w * bound.w;
 
     bool startsGroup = entryGroup != group;
     if (!startsGroup && !nearby) continue;
 
     // Past here the region can change the answer, so its directory slot is worth reading.
-    vec4 entry = maskTexel(MASK_HEADER_TEXELS + float(i));
+    highp vec4 entry = maskTexel(MASK_HEADER_TEXELS + float(i));
 
     if (startsGroup) {
       if (groupInside) {

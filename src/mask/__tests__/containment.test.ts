@@ -231,7 +231,7 @@ describe('packing', () => {
     expect(groupedGroupOf(0)).toBeLessThan(MASK_MAX_REGIONS);
   });
 
-  it('renumbers groups densely, so a caller is free to name them anything', () => {
+  it('renumbers groups densely and packs each mask together, whatever order it arrived in', () => {
     const packed = packMaskRegions(
       [
         { kind: MaskRegionKind.Prism, id: 'a', positions: outline, group: 90000, opacity: 1 },
@@ -240,13 +240,16 @@ describe('packing', () => {
       ],
       0,
     );
+    // The shader reads a change of group as the end of a mask, so a mask split around another
+    // would be read as two — each re-seeded from its own first operation.
     const groupOfPacked = (index: number) => packed.data[(MASK_HEADER_TEXELS + index) * 4 + 3];
-    expect([groupOfPacked(0), groupOfPacked(1), groupOfPacked(2)]).toEqual([0, 1, 0]);
+    expect([groupOfPacked(0), groupOfPacked(1), groupOfPacked(2)]).toEqual([0, 0, 1]);
+    expect(packed.regions.map((region) => region.id)).toEqual(['a', 'c', 'b']);
 
     // The reject texel's packed `group * 4 + flags` has to survive it exactly.
     const rejectAt = (index: number) =>
       packed.data[(MASK_REJECT_OFFSET + index * MASK_REJECT_TEXELS) * 4 + 7];
-    expect(Math.floor(rejectAt(1) * 0.25)).toBe(1);
+    expect(Math.floor(rejectAt(2) * 0.25)).toBe(1);
   });
 
   it('drops a degenerate outline rather than packing a different shape', () => {
@@ -391,7 +394,7 @@ describe('mask evaluation, as the shader does it', () => {
 
     const insideA = evaluatePackedMask(packed, new Vector3(5, 5, 3));
     expect(insideA.inside).toBe(true);
-    expect(insideA.opacity).toBeGreaterThan(0)
+    expect(insideA.opacity).toBeGreaterThan(0);
   });
 
   it('takes the more visible opacity where two masks both keep a point', () => {
