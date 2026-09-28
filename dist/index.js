@@ -585,7 +585,7 @@ bool maskPrismContains(highp float base, highp vec3 worldPos) {
 /* How many regions the mask holds. Zero means nothing is masked at all — which is not the same as
    a mask that hides everything, and a consumer that treats the two alike blanks its own scene the
    moment an area has no mask. */
-float maskRegionCount() {
+highp float maskRegionCount() {
   return maskTexel(0.0).x;
 }
 
@@ -604,7 +604,7 @@ float maskRegionCount() {
    empty scene, which is not what the detector produces from the same regions.
 
    A point no group kept takes the outside-everything default. */
-float maskEvaluate(highp vec3 worldPos, out bool inside) {
+highp float maskEvaluate(highp vec3 worldPos, out bool inside) {
   highp vec4 header = maskTexel(0.0);
   highp float regionCount = header.x;
   highp float defaultOpacity = header.y;
@@ -614,11 +614,11 @@ float maskEvaluate(highp vec3 worldPos, out bool inside) {
   /* The best opacity any mask that keeps this point asks for. Masks are unioned, so a point one
      mask keeps is kept however many others do not — and where two keep it, the more visible of
      them wins, as the box path this replaces did by taking the largest opacity. */
-  float keptOpacity = 0.0;
+  highp float keptOpacity = 0.0;
 
   highp float group = -1.0;
   bool groupInside = false;
-  float groupOpacity = 0.0;
+  highp float groupOpacity = 0.0;
 
   for (int i = 0; i < MASK_MAX_REGIONS; i++) {
     if (float(i) >= regionCount) break;
@@ -722,14 +722,19 @@ function packMaskRegions(regions, defaultOpacity) {
      * Masks whose vertices exceed what one mask may carry, dropped whole.
      *
      * Dropped rather than truncated, and this mask rather than every mask after it: an outline list
-     * cut short is a different mask, and the masks around it have nothing to do with the one that
-     * overflowed — they are unioned with it, not ordered against it.
+     * cut short is a different mask — the hole it carved comes back, or the exclude that seeded it
+     * loses the outlines that gave it shape — and the masks around it have nothing to do with the
+     * one that overflowed, being unioned with it rather than ordered against it.
      */
     for (const [group, groupRegions] of order) {
         const vertices = groupRegions.reduce((total, region) => total + (region.kind === MaskRegionKind.Prism ? region.vertexCount : 0), 0);
         if (vertices > MASK_MAX_TOTAL_VERTICES)
             order.delete(group);
     }
+    /** What a region occupies in the payload area. */
+    const payloadTexels = (region) => region.kind === MaskRegionKind.Prism
+        ? prismPayloadTexels(region.vertexCount)
+        : MASK_CUBOID_PAYLOAD_TEXELS;
     /**
      * Group numbers as packed, renumbered densely in first-appearance order.
      *
@@ -741,16 +746,24 @@ function packMaskRegions(regions, defaultOpacity) {
     let nextGroup = 0;
     let payloadCursor = MASK_PAYLOAD_OFFSET;
     for (const groupRegions of order.values()) {
+        /* Whether the whole mask fits what is left of the directory and the payload — asked before a
+           single region of it is written, and skipped entirely when it does not.
+    
+           Room is measured per mask rather than per region for the same reason the vertex cap is: a
+           mask that stops halfway is a different mask, and it fails silently, which is the worst way
+           for a mask to be wrong. Skipping rather than stopping, because the masks are unioned and a
+           smaller one later may still fit. */
+        const groupPayload = groupRegions.reduce((total, region) => total + payloadTexels(region), 0);
+        if (packed.length + groupRegions.length > MASK_MAX_REGIONS)
+            continue;
+        if (payloadCursor + groupPayload > MASK_TEXTURE_TEXELS)
+            continue;
         const group = nextGroup;
         nextGroup += 1;
         for (const prepared of groupRegions) {
-            if (packed.length >= MASK_MAX_REGIONS)
-                break;
             const isPrism = prepared.kind === MaskRegionKind.Prism;
             const vertexCount = isPrism ? prepared.vertexCount : 0;
-            const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
-            if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS)
-                break;
+            const payloadLength = payloadTexels(prepared);
             const flags = (isPrism ? MASK_FLAG_PRISM : 0) +
                 (prepared.operation === MaskOperation.Exclude ? MASK_FLAG_EXCLUDE : 0);
             // Directory slot: [flags, payloadOffset, opacity, group].

@@ -69,7 +69,7 @@ potree.setMaskConfig({
 });
 ```
 
-`group` defaults to the region's own index, which makes every region its own mask — the right default when each one is a separately-saved region. **Regions of a group must be given contiguously.**
+`group` defaults to the region's own index, which makes every region its own mask — the right default when each one is a separately-saved region. Regions of one mask may be given in any order: the packer gathers them together, keeping their order among themselves, since that order is the mask's meaning.
 
 ### Cuboid
 

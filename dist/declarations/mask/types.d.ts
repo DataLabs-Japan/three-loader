@@ -22,8 +22,8 @@ export interface MaskCuboid {
     /**
      * Regions sharing a group are one mask, evaluated in order among themselves; separate groups are
      * unioned. Defaults to the region's own index, which makes every region its own mask — so an
-     * `exclude` in one mask can never erase what another mask kept. Regions of a group must be
-     * given contiguously.
+     * `exclude` in one mask can never erase what another mask kept. They may be given in any
+     * order — the packer gathers a mask's regions together, keeping their order among themselves.
      */
     group?: number;
     /** Centre in world space. */

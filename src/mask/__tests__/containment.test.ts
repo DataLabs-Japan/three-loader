@@ -252,6 +252,59 @@ describe('packing', () => {
     expect(Math.floor(rejectAt(2) * 0.25)).toBe(1);
   });
 
+  /**
+   * A mask that does not fit is dropped whole.
+   *
+   * Half a mask is a different mask — the hole it carved comes back, or the exclude that seeded it
+   * loses the outlines that gave it shape — and it fails without a sound. The masks around it are
+   * unioned with it, not ordered against it, so they have no reason to go with it.
+   */
+  describe('a mask that does not fit', () => {
+    const bigPrism = (id: string, group: number, vertexCount: number) => ({
+      kind: MaskRegionKind.Prism as const,
+      id,
+      group,
+      opacity: 1,
+      positions: Array.from({ length: vertexCount }, (_, i) => {
+        const angle = (i / vertexCount) * Math.PI * 2;
+        return new Vector3(Math.cos(angle) * 10, Math.sin(angle) * 10, 0);
+      }),
+    });
+
+    it('is dropped whole when its vertices pass the per-mask cap, and its neighbours are not', () => {
+      const overCap = Array.from({ length: 29 }, (_, i) => bigPrism(`over-${i}`, 1, 100));
+      const packed = packMaskRegions([...overCap, bigPrism('fits', 2, 100)], 0);
+
+      expect(packed.regions.map((region) => region.id)).toEqual(['fits']);
+      expect(packed.data[0]).toBe(1);
+    });
+
+    it('is dropped whole when the payload area cannot hold it, and a later smaller one still fits', () => {
+      // Three masks of 2700 vertices each: the first two fill the payload area between them, and
+      // the third cannot start. Truncating it would leave a mask missing its later outlines.
+      const mask = (group: number) => Array.from({ length: 27 }, (_, i) => bigPrism(`m${group}-${i}`, group, 100));
+      const packed = packMaskRegions([...mask(1), ...mask(2), ...mask(3), bigPrism('small', 4, 4)], 0);
+
+      const groupsPacked = new Set(packed.regions.map((region) => region.group));
+      for (const group of groupsPacked) {
+        const packedOfGroup = packed.regions.filter((region) => region.group === group).length;
+        const expected = group === 4 ? 1 : 27;
+        expect(packedOfGroup, `mask ${group} was cut short`).toBe(expected);
+      }
+      // The small one is what proves a later mask is still considered rather than skipped with it.
+      expect(groupsPacked.has(4)).toBe(true);
+    });
+
+    it('is dropped whole when the directory cannot hold it', () => {
+      const wide = Array.from({ length: MASK_MAX_REGIONS }, (_, i) => bigPrism(`wide-${i}`, 1, 3));
+      const packed = packMaskRegions([...wide, bigPrism('second', 2, 3)], 0);
+
+      // The first mask fills the directory exactly; the second cannot start, and is not half-packed.
+      expect(packed.regions.length).toBe(MASK_MAX_REGIONS);
+      expect(packed.regions.every((region) => region.group === 1)).toBe(true);
+    });
+  });
+
   it('drops a degenerate outline rather than packing a different shape', () => {
     const packed = packMaskRegions(
       [

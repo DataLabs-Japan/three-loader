@@ -59,8 +59,9 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
    * Masks whose vertices exceed what one mask may carry, dropped whole.
    *
    * Dropped rather than truncated, and this mask rather than every mask after it: an outline list
-   * cut short is a different mask, and the masks around it have nothing to do with the one that
-   * overflowed — they are unioned with it, not ordered against it.
+   * cut short is a different mask — the hole it carved comes back, or the exclude that seeded it
+   * loses the outlines that gave it shape — and the masks around it have nothing to do with the
+   * one that overflowed, being unioned with it rather than ordered against it.
    */
   for (const [group, groupRegions] of order) {
     const vertices = groupRegions.reduce(
@@ -69,6 +70,12 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
     );
     if (vertices > MASK_MAX_TOTAL_VERTICES) order.delete(group);
   }
+
+  /** What a region occupies in the payload area. */
+  const payloadTexels = (region: PreparedMaskRegion): number =>
+    region.kind === MaskRegionKind.Prism
+      ? prismPayloadTexels(region.vertexCount)
+      : MASK_CUBOID_PAYLOAD_TEXELS;
 
   /**
    * Group numbers as packed, renumbered densely in first-appearance order.
@@ -83,17 +90,24 @@ export function packMaskRegions(regions: MaskRegion[], defaultOpacity: number): 
   let payloadCursor = MASK_PAYLOAD_OFFSET;
 
   for (const groupRegions of order.values()) {
+    /* Whether the whole mask fits what is left of the directory and the payload — asked before a
+       single region of it is written, and skipped entirely when it does not.
+
+       Room is measured per mask rather than per region for the same reason the vertex cap is: a
+       mask that stops halfway is a different mask, and it fails silently, which is the worst way
+       for a mask to be wrong. Skipping rather than stopping, because the masks are unioned and a
+       smaller one later may still fit. */
+    const groupPayload = groupRegions.reduce((total, region) => total + payloadTexels(region), 0);
+    if (packed.length + groupRegions.length > MASK_MAX_REGIONS) continue;
+    if (payloadCursor + groupPayload > MASK_TEXTURE_TEXELS) continue;
+
     const group = nextGroup;
     nextGroup += 1;
 
     for (const prepared of groupRegions) {
-      if (packed.length >= MASK_MAX_REGIONS) break;
-
       const isPrism = prepared.kind === MaskRegionKind.Prism;
       const vertexCount = isPrism ? prepared.vertexCount : 0;
-
-      const payloadLength = isPrism ? prismPayloadTexels(vertexCount) : MASK_CUBOID_PAYLOAD_TEXELS;
-      if (payloadCursor + payloadLength > MASK_TEXTURE_TEXELS) break;
+      const payloadLength = payloadTexels(prepared);
 
       const flags =
         (isPrism ? MASK_FLAG_PRISM : 0) +

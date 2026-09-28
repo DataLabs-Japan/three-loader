@@ -123,7 +123,7 @@ bool maskPrismContains(highp float base, highp vec3 worldPos) {
 /* How many regions the mask holds. Zero means nothing is masked at all — which is not the same as
    a mask that hides everything, and a consumer that treats the two alike blanks its own scene the
    moment an area has no mask. */
-float maskRegionCount() {
+highp float maskRegionCount() {
   return maskTexel(0.0).x;
 }
 
@@ -142,7 +142,7 @@ float maskRegionCount() {
    empty scene, which is not what the detector produces from the same regions.
 
    A point no group kept takes the outside-everything default. */
-float maskEvaluate(highp vec3 worldPos, out bool inside) {
+highp float maskEvaluate(highp vec3 worldPos, out bool inside) {
   highp vec4 header = maskTexel(0.0);
   highp float regionCount = header.x;
   highp float defaultOpacity = header.y;
@@ -152,11 +152,11 @@ float maskEvaluate(highp vec3 worldPos, out bool inside) {
   /* The best opacity any mask that keeps this point asks for. Masks are unioned, so a point one
      mask keeps is kept however many others do not — and where two keep it, the more visible of
      them wins, as the box path this replaces did by taking the largest opacity. */
-  float keptOpacity = 0.0;
+  highp float keptOpacity = 0.0;
 
   highp float group = -1.0;
   bool groupInside = false;
-  float groupOpacity = 0.0;
+  highp float groupOpacity = 0.0;
 
   for (int i = 0; i < MASK_MAX_REGIONS; i++) {
     if (float(i) >= regionCount) break;
