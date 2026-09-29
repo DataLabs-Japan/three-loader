@@ -376,47 +376,40 @@ The GLSL and TypeScript containment tests are the one unavoidable duplicate, so 
 
 **Layout constants are exported too** (`MASK_TEXTURE_WIDTH`, `MASK_HEADER_TEXELS`, `MASK_MAX_REGIONS`, …). Read them; never hard-code a texel offset.
 
-## Migration to the ordered `regions` API
+## Migration from dl.0.9 to >=dl.0.10
 
-**This release is breaking.** Two exported type names survived the change with a different meaning, so a consumer that imports them keeps compiling against the wrong shape until it reaches a use site. Read this section before upgrading.
-
-### The call
-
-`setMaskConfig` takes `regions` in place of `cuboids`. A box region is unchanged apart from living in the new array:
+This one breaks. `setMaskConfig` takes its regions under a different key, and two exported type names came through meaning something else — those two keep compiling at the import and fail at the use site, so read the table before upgrading.
 
 ```typescript
-// -- Before:
+// -- Old way (dl.0.9):
 potree.setMaskConfig({ cuboids: boxes, defaultOpacity: 0 });
 
-// -- After:
+// -- New way (>=dl.0.10):
 potree.setMaskConfig({ regions: boxes, defaultOpacity: 0 });
 ```
 
-The order of `regions` is significant where it never was for `cuboids` — with boxes alone and a single opacity, the two give the same result.
+A box is written exactly as before; only the key it arrives under changed. What is new is that the order of `regions` matters, where the order of `cuboids` never did — see _Include and exclude_.
 
-### Renamed and re-pointed types
+### Renamed types
 
-| Name | Before | Now | What to do |
+| Name | dl.0.9 | >=dl.0.10 | What to do |
 |---|---|---|---|
-| `MaskRegion` | The material path's uniform: `{ id, modelMatrix, min, max, opacity, bbox? }` | `MaskCuboid \| MaskPrism` — what you *pass in* | Importing it for the material path? Rename to `MaskRegionUniform`. |
-| `MaskRegionUniform` | — | The old `MaskRegion`, unchanged | New name for the same shape. |
-| `MaskCuboid` | The *prepared* box: `{ center, halfExtents, axisX/Y/Z, opacity, bbox }` | The box you *pass in*: `{ kind?, id, group?, center, rotation, extent, opacity }` | Wanted the prepared form? It is `PreparedMaskCuboid`. |
-| `Cuboid` | The box you pass in | Deprecated alias of `MaskCuboid` | Keeps working. Drop `bbox` — the input form no longer carries one. |
-| `MaskConfig` | `{ cuboids, defaultOpacity }` | `{ regions, defaultOpacity }` | See the call, above. |
-| `InternalMaskConfig` | `{ cuboids, defaultOpacity, needsUpdate }` | `{ regions, defaultOpacity, hasExcludeSeededGroup }` | Internal; named here because it is exported. |
+| `MaskRegion` | the material path's uniform: `{ id, modelMatrix, min, max, opacity, bbox? }` | `MaskCuboid \| MaskPrism` — what you pass in | using it for the material path? rename to `MaskRegionUniform` |
+| `MaskRegionUniform` | — | the dl.0.9 `MaskRegion`, unchanged | new name for the same shape |
+| `MaskCuboid` | the *prepared* box: `{ center, halfExtents, axisX/Y/Z, opacity, bbox }` | the box you pass in: `{ kind?, id, group?, center, rotation, extent, opacity }` | wanted the prepared form? it is `PreparedMaskCuboid` |
+| `Cuboid` | the box you pass in | deprecated alias of `MaskCuboid` | keeps working; drop `bbox`, the input form no longer carries one |
+| `MaskConfig` | `{ cuboids, defaultOpacity }` | `{ regions, defaultOpacity }` | see above |
+| `InternalMaskConfig` | `{ cuboids, defaultOpacity, needsUpdate }` | `{ regions, defaultOpacity, hasExcludeSeededGroup }` | internal, listed because it is exported |
 
-The types moved from `src/types.ts` to `src/mask/types.ts`, and the whole `mask/` surface is re-exported from the package root — so the import path is unchanged either way.
+The types moved from `src/types.ts` to `src/mask/types.ts`, but the whole `mask/` surface is re-exported from the package root, so no import path changes.
 
-### What did *not* break
+### What did not break
 
-- **The deprecated material path.** `material.maskRegions` and `material.maskRegionLength` are untouched and still compile; only the *name* of their element type changed, from `MaskRegion` to `MaskRegionUniform`. The values themselves are structurally identical, so an untyped or inferred call site needs no edit.
-- **Box masking behaviour**, for a config of boxes at one opacity. Regions now default to one mask each and masks are unioned, but a union of boxes at a single opacity is what the old flat list already produced.
+The deprecated material path is untouched: `material.maskRegionLength`, `material.maskRegions` and `material.opacityOutOfMasks` all still work, and only the *name* of the uniform's type changed. The values are structurally identical, so a call site that never named the type needs no edit at all.
 
-Two things to check if your boxes carry **different** opacities: where two masks both keep a point the larger opacity wins, and an `exclude`-seeded mask keeps everything outside its own outlines, so its opacity applies nearly everywhere.
+Box masking is unchanged for a config of boxes at one opacity. Regions now default to one mask each and masks are unioned, but a union of boxes at a single opacity is what the flat `cuboids` list already produced. If your boxes carry **different** opacities, two things are worth re-checking: where two masks both keep a point the larger opacity wins, and an `exclude`-seeded mask keeps everything outside its own outlines, so its opacity reaches nearly everywhere.
 
-### The packed texture moved
-
-The payload now begins after a reject block that did not exist before, so `MASK_PAYLOAD_OFFSET` is no longer `MASK_HEADER_TEXELS + MASK_MAX_REGIONS`. Anything reading or writing the texture by hand must take the offsets from the exported constants — see _Masking something other than the point cloud_.
+**Note:** if you address the packed texture yourself, the payload now begins after a reject block that did not exist in dl.0.9, so `MASK_PAYLOAD_OFFSET` is no longer `MASK_HEADER_TEXELS + MASK_MAX_REGIONS`. Take every offset from the exported constants — see _Masking something other than the point cloud_.
 
 ## Migration from dl.0.5 to >=dl.0.6
 
