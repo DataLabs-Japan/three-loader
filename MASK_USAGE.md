@@ -378,6 +378,10 @@ The GLSL and TypeScript containment tests are the one unavoidable duplicate, so 
 
 ## Migration to the ordered `regions` API
 
+**This release is breaking.** Two exported type names survived the change with a different meaning, so a consumer that imports them keeps compiling against the wrong shape until it reaches a use site. Read this section before upgrading.
+
+### The call
+
 `setMaskConfig` takes `regions` in place of `cuboids`. A box region is unchanged apart from living in the new array:
 
 ```typescript
@@ -389,6 +393,30 @@ potree.setMaskConfig({ regions: boxes, defaultOpacity: 0 });
 ```
 
 The order of `regions` is significant where it never was for `cuboids` — with boxes alone and a single opacity, the two give the same result.
+
+### Renamed and re-pointed types
+
+| Name | Before | Now | What to do |
+|---|---|---|---|
+| `MaskRegion` | The material path's uniform: `{ id, modelMatrix, min, max, opacity, bbox? }` | `MaskCuboid \| MaskPrism` — what you *pass in* | Importing it for the material path? Rename to `MaskRegionUniform`. |
+| `MaskRegionUniform` | — | The old `MaskRegion`, unchanged | New name for the same shape. |
+| `MaskCuboid` | The *prepared* box: `{ center, halfExtents, axisX/Y/Z, opacity, bbox }` | The box you *pass in*: `{ kind?, id, group?, center, rotation, extent, opacity }` | Wanted the prepared form? It is `PreparedMaskCuboid`. |
+| `Cuboid` | The box you pass in | Deprecated alias of `MaskCuboid` | Keeps working. Drop `bbox` — the input form no longer carries one. |
+| `MaskConfig` | `{ cuboids, defaultOpacity }` | `{ regions, defaultOpacity }` | See the call, above. |
+| `InternalMaskConfig` | `{ cuboids, defaultOpacity, needsUpdate }` | `{ regions, defaultOpacity, hasExcludeSeededGroup }` | Internal; named here because it is exported. |
+
+The types moved from `src/types.ts` to `src/mask/types.ts`, and the whole `mask/` surface is re-exported from the package root — so the import path is unchanged either way.
+
+### What did *not* break
+
+- **The deprecated material path.** `material.maskRegions` and `material.maskRegionLength` are untouched and still compile; only the *name* of their element type changed, from `MaskRegion` to `MaskRegionUniform`. The values themselves are structurally identical, so an untyped or inferred call site needs no edit.
+- **Box masking behaviour**, for a config of boxes at one opacity. Regions now default to one mask each and masks are unioned, but a union of boxes at a single opacity is what the old flat list already produced.
+
+Two things to check if your boxes carry **different** opacities: where two masks both keep a point the larger opacity wins, and an `exclude`-seeded mask keeps everything outside its own outlines, so its opacity applies nearly everywhere.
+
+### The packed texture moved
+
+The payload now begins after a reject block that did not exist before, so `MASK_PAYLOAD_OFFSET` is no longer `MASK_HEADER_TEXELS + MASK_MAX_REGIONS`. Anything reading or writing the texture by hand must take the offsets from the exported constants — see _Masking something other than the point cloud_.
 
 ## Migration from dl.0.5 to >=dl.0.6
 
