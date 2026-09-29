@@ -269,6 +269,16 @@ export class PointCloudOctreePicker {
     pickMaterial.useFilterByNormal = nodeMaterial.useFilterByNormal;
     pickMaterial.filterByNormalThreshold = nodeMaterial.filterByNormalThreshold;
 
+    // Pick through the mask, so a point the shader discards cannot be picked either. The texture
+    // is the same object the render material holds, so a mask change needs no work here; only
+    // compiling the mask path in for the first time costs a recompile.
+    pickMaterial.maskRegionTexture = nodeMaterial.maskRegionTexture;
+    if (pickMaterial.useMaskTexture !== nodeMaterial.useMaskTexture) {
+      pickMaterial.useMaskTexture = nodeMaterial.useMaskTexture;
+      pickMaterial.updateShaders();
+      pickMaterial.needsUpdate = true;
+    }
+
     if (params.pickOutsideClipRegion) {
       pickMaterial.clipMode = ClipMode.DISABLED;
     } else {

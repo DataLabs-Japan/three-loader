@@ -1,0 +1,219 @@
+import {
+  MASK_FLAG_EXCLUDE,
+  MASK_FLAG_PRISM,
+  MASK_HEADER_TEXELS,
+  MASK_MAX_PRISM_VERTICES,
+  MASK_MAX_REGIONS,
+  MASK_PRISM_HEADER_TEXELS,
+  MASK_REJECT_OFFSET,
+  MASK_REJECT_TEXELS,
+  MASK_TEXTURE_HEIGHT,
+  MASK_TEXTURE_WIDTH,
+} from './constants';
+
+const f = (value: number): string => value.toFixed(1);
+
+/**
+ * Marker a shader carries where the mask chunk belongs — after its precision block, before it is
+ * used. Replaced with {@link MASK_GLSL_CHUNK} when the mask path is compiled in.
+ */
+export const MASK_CHUNK_TOKEN = '//__MASK_CHUNK__';
+
+/**
+ * The masking containment test and the ordered painting loop, as GLSL a consuming material can
+ * inject verbatim.
+ *
+ * It reports *inside* and *opacity*; what a shader does with them — discard, dim, tint — stays the
+ * caller's business. The layout constants are interpolated from `mask/constants`, so a consumer
+ * never hard-codes a texel offset, and the chunk cannot drift from the packer.
+ *
+ * Written to GLSL ES 1.00 rules (float index arithmetic, `texture2D`, constant loop bounds) so it
+ * compiles unchanged in this library's `RawShaderMaterial` point cloud shader and in a plain
+ * three.js material, which three.js compiles as GLSL ES 3.00.
+ *
+ * The chunk declares the `uMaskRegionTex` uniform itself; the consuming material binds the packed
+ * texture to it and must not declare it again.
+ */
+export const MASK_GLSL_CHUNK = `
+/* Every float this chunk declares is highp, and none of it is optional.
+
+   The chunk is spliced into a host shader and inherits whatever precision that host declared, and
+   the two quantities here both need more than mediump gives. The texel index reaches into the
+   thousands, where a 10-bit mantissa stops being exact and the row it floors to is another
+   region's. World positions are worse: at the ±400 m coordinate limit the mediump quantum is
+   about 0.4 m, so the flattened coordinates and the crossing test collapse and the mask is wrong
+   everywhere rather than at one edge.
+
+   Both of this library's own consumers declare highp, so this is for the third one — the plain
+   three.js material this chunk is exported for, which takes whatever the GPU reports. */
+uniform highp sampler2D uMaskRegionTex;
+
+#define MASK_TEX_WIDTH ${f(MASK_TEXTURE_WIDTH)}
+#define MASK_TEX_INV_WIDTH ${1 / MASK_TEXTURE_WIDTH}
+#define MASK_TEX_INV_HEIGHT ${1 / MASK_TEXTURE_HEIGHT}
+#define MASK_HEADER_TEXELS ${f(MASK_HEADER_TEXELS)}
+#define MASK_MAX_REGIONS ${MASK_MAX_REGIONS}
+#define MASK_MAX_PRISM_VERTICES ${MASK_MAX_PRISM_VERTICES}
+#define MASK_PRISM_HEADER_TEXELS ${f(MASK_PRISM_HEADER_TEXELS)}
+#define MASK_REJECT_OFFSET ${f(MASK_REJECT_OFFSET)}
+#define MASK_REJECT_TEXELS ${f(MASK_REJECT_TEXELS)}
+#define MASK_FLAG_PRISM ${f(MASK_FLAG_PRISM)}
+#define MASK_FLAG_EXCLUDE ${f(MASK_FLAG_EXCLUDE)}
+
+/* Texel at an absolute index. The reciprocals are exact powers of two, so the row/column split is
+   exact for every index the layout can produce. */
+highp vec4 maskTexel(highp float index) {
+  highp float row = floor(index * MASK_TEX_INV_WIDTH);
+  highp float col = index - row * MASK_TEX_WIDTH;
+  return texture2D(uMaskRegionTex, vec2((col + 0.5) * MASK_TEX_INV_WIDTH, (row + 0.5) * MASK_TEX_INV_HEIGHT));
+}
+
+/* One flattened prism vertex; two share a texel. */
+highp vec2 maskPrismVertex(highp float base, highp float index) {
+  highp float pair = floor(index * 0.5);
+  highp vec4 texel = maskTexel(base + pair);
+  return (index - pair * 2.0 < 0.5) ? texel.xy : texel.zw;
+}
+
+bool maskCuboidContains(highp float base, highp vec3 worldPos) {
+  highp mat4 inverseModel = mat4(
+    maskTexel(base),
+    maskTexel(base + 1.0),
+    maskTexel(base + 2.0),
+    maskTexel(base + 3.0)
+  );
+  highp vec3 local = (inverseModel * vec4(worldPos, 1.0)).xyz;
+  highp vec3 lower = maskTexel(base + 4.0).xyz;
+  highp vec3 upper = maskTexel(base + 5.0).xyz;
+  return all(greaterThanEqual(local, lower)) && all(lessThanEqual(local, upper));
+}
+
+/* A closed outline extruded infinitely both ways along its plane normal: only the in-plane
+   position decides. The prism has no finite world AABB to reject against — it is unbounded along
+   its normal — so the exact in-plane bounds do that job before the crossing loop, which at the
+   vertex cap would otherwise be 100 edge tests per fragment. */
+bool maskPrismContains(highp float base, highp vec3 worldPos) {
+  highp vec4 head = maskTexel(base);
+  highp float vertexCount = head.w;
+  highp vec3 axisU = maskTexel(base + 1.0).xyz;
+  highp vec3 axisW = maskTexel(base + 2.0).xyz;
+  highp vec4 bounds = maskTexel(base + 3.0);
+
+  highp vec3 offset = worldPos - head.xyz;
+  highp vec2 flat2 = vec2(dot(offset, axisU), dot(offset, axisW));
+  if (flat2.x < bounds.x || flat2.y < bounds.y || flat2.x > bounds.z || flat2.y > bounds.w) {
+    return false;
+  }
+
+  highp float vertexBase = base + MASK_PRISM_HEADER_TEXELS;
+  bool inside = false;
+  highp vec2 previous = maskPrismVertex(vertexBase, vertexCount - 1.0);
+  for (int i = 0; i < MASK_MAX_PRISM_VERTICES; i++) {
+    if (float(i) >= vertexCount) break;
+    highp vec2 current = maskPrismVertex(vertexBase, float(i));
+    if (((current.y > flat2.y) != (previous.y > flat2.y)) &&
+        (flat2.x < (previous.x - current.x) * (flat2.y - current.y) / (previous.y - current.y) + current.x)) {
+      inside = !inside;
+    }
+    previous = current;
+  }
+  return inside;
+}
+
+/* How many regions the mask holds. Zero means nothing is masked at all — which is not the same as
+   a mask that hides everything, and a consumer that treats the two alike blanks its own scene the
+   moment an area has no mask. */
+highp float maskRegionCount() {
+  return maskTexel(0.0).x;
+}
+
+/* Walk the regions in order.
+
+   Within a group — one mask — the last match wins, so an outline can carve a hole out of an
+   earlier one and a further outline can put part of that hole back. Separate groups are unioned:
+   an exclude in one mask can never erase what another mask kept, which is why the group's verdict
+   is only folded in once the group ends. Regions of a group arrive contiguously, so a change of
+   group index is the end of one.
+
+   **The group's first operation seeds it.** A leading include starts from nothing and grows —
+   "keep only what I outlined". A leading exclude starts from everything and shrinks — "hide what
+   I outlined". Both are legitimate masks, and the difference is invisible unless the seed is
+   implemented: seeding empty regardless would render a mask that opens with an exclude as an
+   empty scene, which is not what the detector produces from the same regions.
+
+   A point no group kept takes the outside-everything default. */
+highp float maskEvaluate(highp vec3 worldPos, out bool inside) {
+  highp vec4 header = maskTexel(0.0);
+  highp float regionCount = header.x;
+  highp float defaultOpacity = header.y;
+
+  inside = false;
+
+  /* The best opacity any mask that keeps this point asks for. Masks are unioned, so a point one
+     mask keeps is kept however many others do not — and where two keep it, the more visible of
+     them wins, as the box path this replaces did by taking the largest opacity. */
+  highp float keptOpacity = 0.0;
+
+  highp float group = -1.0;
+  bool groupInside = false;
+  highp float groupOpacity = 0.0;
+
+  for (int i = 0; i < MASK_MAX_REGIONS; i++) {
+    if (float(i) >= regionCount) break;
+
+    /* The reject pair, at an address this loop can compute on its own. Nearly every fragment is
+       outside nearly every region, and for those two fetches is the whole cost: the directory and
+       the region's geometry are read only where they can change the answer. */
+    highp float rejectBase = MASK_REJECT_OFFSET + float(i) * MASK_REJECT_TEXELS;
+    highp vec4 bound = maskTexel(rejectBase);
+    highp vec4 axis = maskTexel(rejectBase + 1.0);
+
+    highp float groupAndFlags = axis.w;
+    highp float entryGroup = floor(groupAndFlags * 0.25);
+    highp float flags = groupAndFlags - entryGroup * 4.0;
+
+    /* Inside the cylinder of bound.w around the line through bound.xyz along axis.xyz — for a box
+       the axis is zero, which leaves the same arithmetic testing its bounding sphere. */
+    highp vec3 offset = worldPos - bound.xyz;
+    highp vec3 radial = offset - dot(offset, axis.xyz) * axis.xyz;
+    bool nearby = dot(radial, radial) <= bound.w * bound.w;
+
+    bool startsGroup = entryGroup != group;
+    if (!startsGroup && !nearby) continue;
+
+    // Past here the region can change the answer, so its directory slot is worth reading.
+    highp vec4 entry = maskTexel(MASK_HEADER_TEXELS + float(i));
+
+    if (startsGroup) {
+      if (groupInside) {
+        inside = true;
+        keptOpacity = max(keptOpacity, groupOpacity);
+      }
+      group = entryGroup;
+      // This entry is the group's first, so its operation is the seed.
+      groupInside = flags >= MASK_FLAG_EXCLUDE;
+      groupOpacity = entry.z;
+    }
+
+    if (!nearby) continue;
+
+    bool isPrism = mod(flags, 2.0) >= 0.5;
+    bool hit = isPrism ? maskPrismContains(entry.y, worldPos) : maskCuboidContains(entry.y, worldPos);
+    if (hit) {
+      if (flags >= MASK_FLAG_EXCLUDE) {
+        groupInside = false;
+      } else {
+        groupInside = true;
+        groupOpacity = entry.z;
+      }
+    }
+  }
+
+  if (groupInside) {
+    inside = true;
+    keptOpacity = max(keptOpacity, groupOpacity);
+  }
+
+  return inside ? keptOpacity : defaultOpacity;
+}
+`;
