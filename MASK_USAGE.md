@@ -407,7 +407,7 @@ The types moved from `src/types.ts` to `src/mask/types.ts`, but the whole `mask/
 
 The deprecated material path is untouched: `material.maskRegionLength`, `material.maskRegions` and `material.opacityOutOfMasks` all still work, and only the *name* of the uniform's type changed. The values are structurally identical, so a call site that never named the type needs no edit at all.
 
-Box masking is unchanged for a config of boxes at one opacity. Regions now default to one mask each and masks are unioned, but a union of boxes at a single opacity is what the flat `cuboids` list already produced. If your boxes carry **different** opacities, two things are worth re-checking: where two masks both keep a point the larger opacity wins, and an `exclude`-seeded mask keeps everything outside its own outlines, so its opacity reaches nearly everywhere.
+Box masking is unchanged, whatever opacities the boxes carry. Regions now default to one mask each and masks are unioned — but dl.0.9 already took the **largest** opacity among the boxes containing a point, which is what a union does, so the two agree point for point with overlaps included. `src/mask/__tests__/back-compat.test.ts` holds them against each other: dl.0.9's preparation and its `checkWithinCuboid`, transcribed from the code that shipped, run over the same boxes and points as the current packed path.
 
 **Note:** if you address the packed texture yourself, the payload now begins after a reject block that did not exist in dl.0.9, so `MASK_PAYLOAD_OFFSET` is no longer `MASK_HEADER_TEXELS + MASK_MAX_REGIONS`. Take every offset from the exported constants — see _Masking something other than the point cloud_.
 
