@@ -103,10 +103,11 @@ varying vec4 fragPosition;
 	}
 #endif
 
-/* The masking mechanism — the containment test and the ordered painting loop — is injected here
-   from `mask/glsl.ts` when the `mask_texture` path is compiled in, so the point cloud and any
-   other renderer masking by the same texture run the identical code. */
-//__MASK_CHUNK__
+/* The mask verdict arrives from the vertex stage, which evaluates it once per point; see
+   `pointcloud.vert`. */
+#if defined mask_texture
+	varying float vMaskOpacity;
+#endif
 
 varying float vIsHighlighted;
 uniform int highlightedType;
@@ -183,18 +184,10 @@ void main() {
 		}
 	#endif
 
-	/* After the cheap discards above, not before them. A square point sprite drawn as a circle
-	   throws away about a fifth of its fragments, and the clipped and depth-rejected ones go the
-	   same way; evaluating the mask first means paying its texture fetches for every one of them.
-	   Nothing between here and there reads `overrideOpacity`. */
 	#if defined mask_texture
-		// Regions are painted in order and the last match wins; a fragment matched by nothing takes
-		// the mask's outside-everything default. Both come out of the texture, so nothing here
-		// depends on how many regions there are.
-		bool isFragmentInsideMask = false;
-		overrideOpacity = maskEvaluate(fragPosition.xyz, isFragmentInsideMask);
-
-		// discard fragment if fragment's opacity <= 0.0
+		// Masked-out points never reach here — the vertex stage moved them off screen — so this is
+		// a read, not an evaluation.
+		overrideOpacity = vMaskOpacity;
 		if (overrideOpacity <= 0.0) {
 			discard;
 			return;
