@@ -437,6 +437,17 @@ vec3 getColorStop(float color1, float color2, float t) {
 }
 varying vec4 fragPosition;
 
+/* The mask is decided here, once per point, rather than per fragment. A point sprite's fragments all
+   receive the same `fragPosition` — points are not interpolated — so the fragment stage would
+   repeat an identical verdict for every pixel the sprite covers, and edge-on, where sprites pile up
+   behind one another, that multiplies into most of the frame. A masked-out point is moved off
+   screen here and rasterizes nothing at all. */
+//__MASK_CHUNK__
+
+#if defined mask_texture
+	varying float vMaskOpacity;
+#endif
+
 varying float vIsHighlighted;
 
 uniform vec3 highlightedPoint0;
@@ -585,6 +596,14 @@ void main() {
 
 		if (discardPoint)
 		{
+			gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+		}
+	#endif
+
+	#if defined mask_texture
+		bool isPointInsideMask = false;
+		vMaskOpacity = maskEvaluate(fragPosition.xyz, isPointInsideMask);
+		if (vMaskOpacity <= 0.0) {
 			gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
 		}
 	#endif
